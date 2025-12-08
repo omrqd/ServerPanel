@@ -167,41 +167,28 @@ install_php() {
     log_info "Ubuntu version: $UBUNTU_VERSION"
     
     # For Ubuntu 24.04+, use native PHP 8.3
-    # For older versions, use ppa:ondrej/php
     if [[ "$UBUNTU_VERSION" == "24.04" ]] || [[ "$UBUNTU_VERSION" > "24" ]]; then
         log_info "Using native PHP 8.3 for Ubuntu 24.04..."
         PHP_VER="8.3"
     else
         log_info "Adding PHP repository for older Ubuntu..."
-        if ! command -v php &> /dev/null; then
-            add-apt-repository -y ppa:ondrej/php 2>&1 | tail -n 3 || true
-            apt-get update -y 2>&1 | tail -n 3
-        fi
+        add-apt-repository -y ppa:ondrej/php || true
+        apt-get update -y
         PHP_VER="8.2"
     fi
     
-    log_info "Installing PHP $PHP_VER packages (this may take a few minutes)..."
+    log_info "Installing PHP $PHP_VER packages..."
     
-    # Install PHP and essential extensions with visible output
-    apt-get install -y \
-        php${PHP_VER} \
-        php${PHP_VER}-cli \
-        php${PHP_VER}-fpm \
-        php${PHP_VER}-common \
-        php${PHP_VER}-mysql \
-        php${PHP_VER}-zip \
-        php${PHP_VER}-gd \
-        php${PHP_VER}-mbstring \
-        php${PHP_VER}-curl \
-        php${PHP_VER}-xml \
-        php${PHP_VER}-bcmath \
-        php${PHP_VER}-intl \
-        php${PHP_VER}-readline \
-        php${PHP_VER}-opcache \
-        2>&1 | grep -E "(Unpacking|Setting up|php)" | tail -n 10
+    # Install PHP packages one by one to avoid issues
+    PACKAGES="php${PHP_VER} php${PHP_VER}-cli php${PHP_VER}-fpm php${PHP_VER}-common php${PHP_VER}-mysql php${PHP_VER}-zip php${PHP_VER}-gd php${PHP_VER}-mbstring php${PHP_VER}-curl php${PHP_VER}-xml php${PHP_VER}-bcmath php${PHP_VER}-intl php${PHP_VER}-readline php${PHP_VER}-opcache"
     
-    # Install redis extension separately (may not exist on all systems)
-    apt-get install -y php${PHP_VER}-redis 2>/dev/null || log_warning "php-redis not available, will install later"
+    for pkg in $PACKAGES; do
+        log_info "Installing $pkg..."
+        apt-get install -y $pkg
+    done
+    
+    # Install redis extension separately
+    apt-get install -y php${PHP_VER}-redis 2>/dev/null || log_warning "php-redis not available"
     
     # Verify installation
     if command -v php &> /dev/null; then
