@@ -183,7 +183,8 @@ function get_php_version()
  */
 function is_root()
 {
-    return posix_getuid() === 0;
+    // Use whoami instead of posix_getuid() as posix extension may not be available
+    return trim(shell_exec('whoami')) === 'root';
 }
 
 /**

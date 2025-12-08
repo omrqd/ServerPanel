@@ -272,6 +272,27 @@
     border-color: rgba(139, 92, 246, 0.5);
 }
 
+.btn-repair {
+    padding: 8px 16px;
+    background: rgba(245, 158, 11, 0.2);
+    border: 1px solid rgba(245, 158, 11, 0.3);
+    border-radius: 8px;
+    color: #fbbf24;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.btn-repair:hover {
+    background: rgba(245, 158, 11, 0.3);
+    border-color: rgba(245, 158, 11, 0.5);
+}
+
+.btn-repair.hidden {
+    display: none;
+}
+
 /* Status badge */
 .status-badge {
     display: inline-flex;
@@ -333,9 +354,12 @@
 
 /* Animations */
 @keyframes pulse-glow {
-    0%, 100% {
+
+    0%,
+    100% {
         box-shadow: 0 0 20px rgba(14, 165, 233, 0.4);
     }
+
     50% {
         box-shadow: 0 0 40px rgba(14, 165, 233, 0.6);
     }
@@ -346,6 +370,7 @@
         opacity: 0;
         transform: translateY(20px);
     }
+
     to {
         opacity: 1;
         transform: translateY(0);
@@ -356,6 +381,7 @@
     from {
         opacity: 0;
     }
+
     to {
         opacity: 1;
     }
@@ -401,6 +427,7 @@
         opacity: 0;
         transform: translateX(100px);
     }
+
     to {
         opacity: 1;
         transform: translateX(0);

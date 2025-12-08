@@ -475,22 +475,30 @@ function getTestingContent() {
             { id: 'redis', name: 'Redis', desc: 'Cache connection' },
             { id: 'nodejs', name: 'Node.js', desc: 'Node runtime' }
         ].map(test => `
-                    <div class="flex items-center justify-between p-4 bg-white/5 rounded-xl">
+                    <div class="flex items-center justify-between p-4 bg-white/5 rounded-xl" id="test-row-${test.id}">
                         <div>
                             <h3 class="font-semibold">${test.name}</h3>
                             <p class="text-sm text-gray-500">${test.desc}</p>
                         </div>
-                        <div class="flex items-center gap-3">
+                        <div class="flex items-center gap-2">
                             <span class="status-badge pending" id="test-${test.id}-status">pending</span>
                             <button class="btn-test" onclick="testComponent('${test.id}')">Test</button>
+                            <button class="btn-repair hidden" id="repair-${test.id}" onclick="repairComponent('${test.id}')">🔧 Repair</button>
                         </div>
                     </div>
                 `).join('')}
             </div>
             
-            <button class="btn-success w-full mt-6" onclick="testAllComponents()">
-                Test All Components
-            </button>
+            <div class="flex gap-4 mt-6">
+                <button class="btn-success flex-1" onclick="testAllComponents()">
+                    Test All Components
+                </button>
+                <button class="btn-secondary flex-1" onclick="repairAllFailed()">
+                    🔧 Repair All Failed
+                </button>
+            </div>
+            
+            <div id="repair-output" class="console-output mt-4 hidden"></div>
         </div>
     `;
 }
@@ -498,54 +506,84 @@ function getTestingContent() {
 // Complete Step
 function getCompleteContent() {
     return `
-        <div class="glass-card p-8 text-center">
-            <div class="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center">
-                <svg class="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
-                </svg>
+        <div class="glass-card p-8">
+            <div class="text-center mb-8">
+                <div class="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center">
+                    <svg class="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                    </svg>
+                </div>
+                
+                <h2 class="text-3xl font-bold gradient-text mb-3">Almost Done!</h2>
+                <p class="text-gray-400 max-w-xl mx-auto">
+                    Configure SSL and finalize your server setup.
+                </p>
             </div>
             
-            <h2 class="text-3xl font-bold gradient-text mb-3">Setup Complete!</h2>
-            <p class="text-gray-400 max-w-xl mx-auto mb-8">
-                Your server is now production-ready. Below are your credentials and next steps.
-            </p>
+            <!-- SSL Configuration -->
+            <div class="bg-white/5 rounded-xl p-6 text-left mb-6">
+                <h3 class="font-semibold mb-4">🔒 SSL Certificate Mode</h3>
+                <div class="space-y-3">
+                    <label class="flex items-center p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-all">
+                        <input type="radio" name="sslMode" value="cloudflare" class="mr-3" ${state.config.sslMode === 'cloudflare' ? 'checked' : ''} onchange="state.config.sslMode = 'cloudflare'">
+                        <div>
+                            <span class="font-medium">☁️ Cloudflare SSL</span>
+                            <p class="text-sm text-gray-500">Use Cloudflare's SSL proxy (recommended)</p>
+                        </div>
+                    </label>
+                    <label class="flex items-center p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-all">
+                        <input type="radio" name="sslMode" value="letsencrypt" class="mr-3" ${state.config.sslMode === 'letsencrypt' || !state.config.sslMode ? 'checked' : ''} onchange="state.config.sslMode = 'letsencrypt'">
+                        <div>
+                            <span class="font-medium">🔐 Let's Encrypt</span>
+                            <p class="text-sm text-gray-500">Free SSL certificate (requires domain pointing to server)</p>
+                        </div>
+                    </label>
+                    <label class="flex items-center p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-all">
+                        <input type="radio" name="sslMode" value="none" class="mr-3" ${state.config.sslMode === 'none' ? 'checked' : ''} onchange="state.config.sslMode = 'none'">
+                        <div>
+                            <span class="font-medium">⏭️ Skip SSL</span>
+                            <p class="text-sm text-gray-500">Configure SSL manually later</p>
+                        </div>
+                    </label>
+                </div>
+            </div>
             
-            <div class="bg-white/5 rounded-xl p-6 text-left mb-8">
-                <h3 class="font-semibold mb-4">Credentials</h3>
+            <!-- Credentials -->
+            <div class="bg-white/5 rounded-xl p-6 text-left mb-6">
+                <h3 class="font-semibold mb-4">📋 Credentials Summary</h3>
                 <div class="space-y-3">
                     <div>
                         <label class="text-sm text-gray-500">Domain</label>
                         <div class="credential-box">
-                            <span id="final-domain">${state.config.domain}</span>
+                            <span>${state.config.domain}</span>
                             <button class="copy-btn" onclick="copyToClipboard('${state.config.domain}')">Copy</button>
                         </div>
                     </div>
                     <div>
                         <label class="text-sm text-gray-500">MySQL Root Password</label>
                         <div class="credential-box">
-                            <span id="final-mysql-pass">••••••••</span>
+                            <span>••••••••</span>
                             <button class="copy-btn" onclick="copyToClipboard('${state.config.mysqlRootPassword}')">Copy</button>
                         </div>
                     </div>
                 </div>
             </div>
             
-            <div class="p-4 bg-red-500/10 border border-red-500/20 rounded-xl mb-8">
+            <div class="p-4 bg-red-500/10 border border-red-500/20 rounded-xl mb-6">
                 <div class="flex items-start gap-3">
                     <svg class="w-5 h-5 text-red-400 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
                     </svg>
                     <div class="text-left">
                         <p class="text-sm text-red-300">
-                            <strong>Important:</strong> This installer will now be permanently deleted from your server.
-                            Make sure you've saved all credentials above!
+                            <strong>Important:</strong> Save your credentials! The installer will be deleted after completion.
                         </p>
                     </div>
                 </div>
             </div>
             
-            <button class="btn-primary" onclick="finalizeInstallation()">
-                Complete Setup & Remove Installer
+            <button class="btn-primary w-full" onclick="finalizeInstallation()">
+                🚀 Complete Setup & Remove Installer
             </button>
         </div>
     `;
@@ -675,6 +713,8 @@ function updateComponentBadges(component) {
 // Test component
 async function testComponent(component) {
     const statusEl = document.getElementById(`test-${component}-status`);
+    const repairBtn = document.getElementById(`repair-${component}`);
+
     statusEl.className = 'status-badge running';
     statusEl.textContent = 'testing...';
 
@@ -695,14 +735,18 @@ async function testComponent(component) {
             statusEl.className = 'status-badge success';
             statusEl.textContent = 'passed';
             state.testResults[component] = true;
+            if (repairBtn) repairBtn.classList.add('hidden');
         } else {
             statusEl.className = 'status-badge error';
             statusEl.textContent = 'failed';
             state.testResults[component] = false;
+            // Show repair button on failure
+            if (repairBtn) repairBtn.classList.remove('hidden');
         }
     } catch (error) {
         statusEl.className = 'status-badge error';
         statusEl.textContent = 'error';
+        if (repairBtn) repairBtn.classList.remove('hidden');
     }
 }
 
@@ -712,6 +756,63 @@ async function testAllComponents() {
     for (const component of components) {
         await testComponent(component);
         await new Promise(r => setTimeout(r, 500));
+    }
+}
+
+// Repair a single component
+async function repairComponent(component) {
+    const statusEl = document.getElementById(`test-${component}-status`);
+    const output = document.getElementById('repair-output');
+
+    statusEl.className = 'status-badge running';
+    statusEl.textContent = 'repairing...';
+    output.classList.remove('hidden');
+    output.innerHTML += `<div class="console-line info">Repairing ${component}...</div>`;
+
+    try {
+        const response = await fetch(CONFIG.apiEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'repair',
+                component: component,
+                config: state.config
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            output.innerHTML += `<div class="console-line success">✓ ${result.message}</div>`;
+            showToast(`${component} repaired!`, 'success');
+
+            // Show repair output
+            if (result.output) {
+                result.output.forEach(line => {
+                    output.innerHTML += `<div class="console-line">${line}</div>`;
+                });
+            }
+
+            // Re-test the component
+            await new Promise(r => setTimeout(r, 1000));
+            await testComponent(component);
+        } else {
+            output.innerHTML += `<div class="console-line error">✗ ${result.message}</div>`;
+            showToast(`Repair failed: ${result.message}`, 'error');
+        }
+    } catch (error) {
+        output.innerHTML += `<div class="console-line error">Error: ${error.message}</div>`;
+    }
+}
+
+// Repair all failed components
+async function repairAllFailed() {
+    const components = ['nginx', 'php', 'mysql', 'redis'];
+    for (const component of components) {
+        if (state.testResults[component] === false) {
+            await repairComponent(component);
+            await new Promise(r => setTimeout(r, 500));
+        }
     }
 }
 

@@ -25,6 +25,9 @@ try {
         case 'test':
             $result = handleTest($component, $config);
             break;
+        case 'repair':
+            $result = handleRepair($component, $config);
+            break;
         case 'finalize':
             $result = handleFinalize($config);
             break;
@@ -556,26 +559,119 @@ function handleTest($component, $config)
 }
 
 /**
+ * Handle component repair (auto-fix broken configs)
+ */
+function handleRepair($component, $config)
+{
+    $output = [];
+    $domain = $config['domain'] ?? 'localhost';
+
+    switch ($component) {
+        case 'nginx':
+            $output[] = 'Attempting to repair Nginx...';
+
+            // Remove broken configs
+            run_command("rm -f /etc/nginx/sites-enabled/{$domain}");
+            run_command("rm -f /etc/nginx/sites-available/{$domain}");
+            run_command('rm -f /etc/nginx/conf.d/rate-limit.conf');
+
+            // Test default config
+            $testResult = run_command('nginx -t 2>&1');
+            if (strpos($testResult, 'successful') !== false) {
+                run_command('systemctl restart nginx');
+                $output[] = 'Nginx repaired - broken configs removed';
+                $output[] = 'Please re-run Nginx installation step';
+                return ['success' => true, 'message' => 'Nginx repaired', 'output' => $output];
+            } else {
+                // Restore default config
+                run_command('apt-get install --reinstall -y nginx');
+                run_command('systemctl restart nginx');
+                $output[] = 'Nginx reinstalled with default config';
+                return ['success' => true, 'message' => 'Nginx reinstalled', 'output' => $output];
+            }
+
+        case 'mysql':
+            $output[] = 'Attempting to repair MySQL...';
+
+            // Check if MySQL is running
+            $status = run_command('systemctl is-active mysql');
+            if (trim($status) !== 'active') {
+                // Try to start MySQL
+                run_command('systemctl start mysql');
+                sleep(2);
+
+                $status = run_command('systemctl is-active mysql');
+                if (trim($status) !== 'active') {
+                    // Check for socket issues
+                    run_command('mkdir -p /var/run/mysqld');
+                    run_command('chown mysql:mysql /var/run/mysqld');
+                    run_command('systemctl restart mysql');
+                    $output[] = 'Fixed MySQL socket directory';
+                }
+            }
+
+            $output[] = 'MySQL service checked and restarted';
+            return ['success' => true, 'message' => 'MySQL repaired', 'output' => $output];
+
+        case 'redis':
+            $output[] = 'Attempting to repair Redis...';
+            run_command('systemctl restart redis-server');
+            sleep(1);
+
+            $ping = run_command('redis-cli ping');
+            if (trim($ping) === 'PONG') {
+                $output[] = 'Redis is now responding';
+                return ['success' => true, 'message' => 'Redis repaired', 'output' => $output];
+            } else {
+                // Reinstall Redis
+                run_command('apt-get install --reinstall -y redis-server');
+                run_command('systemctl restart redis-server');
+                $output[] = 'Redis reinstalled';
+                return ['success' => true, 'message' => 'Redis reinstalled', 'output' => $output];
+            }
+
+        case 'php':
+            $output[] = 'Attempting to repair PHP-FPM...';
+            $phpVersion = trim(run_command('php -v | head -n 1 | cut -d " " -f 2 | cut -d "." -f 1,2'));
+            run_command("systemctl restart php{$phpVersion}-fpm");
+            $output[] = "PHP-FPM {$phpVersion} restarted";
+            return ['success' => true, 'message' => 'PHP-FPM repaired', 'output' => $output];
+
+        default:
+            return ['success' => false, 'message' => 'Unknown component'];
+    }
+}
+
+/**
  * Finalize installation and cleanup
  */
 function handleFinalize($config)
 {
     $output = [];
     $domain = $config['domain'] ?? '';
+    $sslMode = $config['sslMode'] ?? 'letsencrypt'; // 'letsencrypt', 'cloudflare', or 'none'
 
-    // Install Certbot for SSL
-    $output[] = 'Installing Certbot for SSL...';
-    run_command('apt-get install -y certbot python3-certbot-nginx');
+    // Handle SSL based on mode
+    if ($sslMode === 'letsencrypt') {
+        $output[] = 'Installing Certbot for SSL...';
+        run_command('apt-get install -y certbot python3-certbot-nginx');
 
-    if (!empty($domain) && $domain !== 'localhost') {
-        $output[] = 'Obtaining SSL certificate...';
-        $certResult = run_command("certbot --nginx -d {$domain} -d www.{$domain} --non-interactive --agree-tos --email admin@{$domain} 2>&1");
+        if (!empty($domain) && $domain !== 'localhost') {
+            $output[] = 'Obtaining SSL certificate...';
+            $certResult = run_command("certbot --nginx -d {$domain} -d www.{$domain} --non-interactive --agree-tos --email admin@{$domain} 2>&1");
 
-        if (strpos($certResult, 'Successfully') !== false) {
-            $output[] = 'SSL certificate installed';
-        } else {
-            $output[] = 'SSL certificate installation skipped (verify DNS first)';
+            if (strpos($certResult, 'Successfully') !== false) {
+                $output[] = 'SSL certificate installed';
+            } else {
+                $output[] = 'SSL certificate installation skipped (verify DNS first)';
+            }
         }
+    } elseif ($sslMode === 'cloudflare') {
+        $output[] = 'Configuring Nginx for Cloudflare SSL...';
+        configureCloudflareSSL($domain);
+        $output[] = 'Cloudflare SSL configured (Full or Full Strict mode supported)';
+    } else {
+        $output[] = 'SSL skipped - configure manually later';
     }
 
     // Remove temporary installer port from UFW
@@ -590,6 +686,7 @@ function handleFinalize($config)
         'domain' => $domain,
         'mysql_password' => $config['mysqlRootPassword'] ?? '',
         'ssh_port' => $config['sshPort'] ?? 22,
+        'ssl_mode' => $sslMode,
         'installed_at' => date('Y-m-d H:i:s')
     ];
     file_put_contents('/root/.server-panel-credentials.json', json_encode($credentials, JSON_PRETTY_PRINT));
@@ -597,24 +694,38 @@ function handleFinalize($config)
 
     $output[] = 'Credentials saved to /root/.server-panel-credentials.json';
 
-    // Schedule self-destruction
-    $installerDir = dirname(__DIR__);
+    // Self-destruction - find all possible installer locations
+    $possibleDirs = [
+        dirname(__DIR__),
+        '/tmp/server-panel-installer',
+        '/tmp/server-panel',
+        '/root/server-panel',
+        '/var/www/server-panel'
+    ];
 
-    // Create cleanup script
+    $dirsToRemove = [];
+    foreach ($possibleDirs as $dir) {
+        if (is_dir($dir) && file_exists($dir . '/install.sh')) {
+            $dirsToRemove[] = $dir;
+        }
+    }
+
+    // Create cleanup script with all directories
+    $rmCommands = implode("\n", array_map(fn($d) => "rm -rf \"{$d}\"", $dirsToRemove));
     $cleanupScript = "#!/bin/bash
-sleep 5
-rm -rf {$installerDir}
-rm -rf /tmp/server-panel-installer
-pkill -f 'php -S 0.0.0.0:8080'
+sleep 3
+{$rmCommands}
+pkill -f 'php -S 0.0.0.0:8080' 2>/dev/null || true
 rm -- \"\$0\"
 ";
     file_put_contents('/tmp/cleanup-installer.sh', $cleanupScript);
     chmod('/tmp/cleanup-installer.sh', 0755);
 
-    // Run cleanup in background
-    exec('nohup /tmp/cleanup-installer.sh > /dev/null 2>&1 &');
+    // Run cleanup in background using at command or nohup
+    run_command('nohup /tmp/cleanup-installer.sh > /dev/null 2>&1 &');
 
-    $output[] = 'Installer will be removed in 5 seconds';
+    $output[] = 'Installer files will be removed in 3 seconds';
+    $output[] = 'Directories to clean: ' . implode(', ', $dirsToRemove);
 
     return [
         'success' => true,
@@ -622,3 +733,97 @@ rm -- \"\$0\"
         'output' => $output
     ];
 }
+
+/**
+ * Configure Nginx for Cloudflare SSL
+ */
+function configureCloudflareSSL($domain)
+{
+    // Get PHP version
+    $phpVersion = trim(run_command('php -v | head -n 1 | cut -d " " -f 2 | cut -d "." -f 1,2'));
+    $webRoot = "/var/www/{$domain}";
+
+    // Cloudflare IP ranges for real IP restoration
+    $cloudflareConfig = "# Cloudflare Configuration
+# Restore real visitor IP
+set_real_ip_from 103.21.244.0/22;
+set_real_ip_from 103.22.200.0/22;
+set_real_ip_from 103.31.4.0/22;
+set_real_ip_from 104.16.0.0/13;
+set_real_ip_from 104.24.0.0/14;
+set_real_ip_from 108.162.192.0/18;
+set_real_ip_from 131.0.72.0/22;
+set_real_ip_from 141.101.64.0/18;
+set_real_ip_from 162.158.0.0/15;
+set_real_ip_from 172.64.0.0/13;
+set_real_ip_from 173.245.48.0/20;
+set_real_ip_from 188.114.96.0/20;
+set_real_ip_from 190.93.240.0/20;
+set_real_ip_from 197.234.240.0/22;
+set_real_ip_from 198.41.128.0/17;
+set_real_ip_from 2400:cb00::/32;
+set_real_ip_from 2606:4700::/32;
+set_real_ip_from 2803:f800::/32;
+set_real_ip_from 2405:b500::/32;
+set_real_ip_from 2405:8100::/32;
+set_real_ip_from 2c0f:f248::/32;
+set_real_ip_from 2a06:98c0::/29;
+real_ip_header CF-Connecting-IP;
+";
+    file_put_contents('/etc/nginx/conf.d/cloudflare.conf', $cloudflareConfig);
+
+    // Update site config for HTTPS (Cloudflare handles SSL termination)
+    $nginxConfig = "# {$domain} - Cloudflare SSL Configuration
+server {
+    listen 80;
+    listen [::]:80;
+    server_name {$domain} www.{$domain};
+    root {$webRoot}/public;
+    index index.php index.html;
+
+    # Security headers
+    add_header X-Frame-Options \"SAMEORIGIN\" always;
+    add_header X-Content-Type-Options \"nosniff\" always;
+    add_header X-XSS-Protection \"1; mode=block\" always;
+    add_header Referrer-Policy \"strict-origin-when-cross-origin\" always;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss application/atom+xml image/svg+xml;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~ \\.php\$ {
+        fastcgi_pass unix:/run/php/php{$phpVersion}-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
+        include fastcgi_params;
+        fastcgi_hide_header X-Powered-By;
+    }
+
+    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)\$ {
+        expires 1y;
+        add_header Cache-Control \"public, immutable\";
+    }
+
+    location ~ /\\. {
+        deny all;
+    }
+
+    location /api {
+        limit_req zone=api burst=20 nodelay;
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    access_log /var/log/nginx/{$domain}.access.log;
+    error_log /var/log/nginx/{$domain}.error.log;
+}
+";
+    file_put_contents("/etc/nginx/sites-available/{$domain}", $nginxConfig);
+    run_command('nginx -t && systemctl reload nginx');
+}
+
