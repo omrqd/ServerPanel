@@ -162,35 +162,55 @@ install_dependencies() {
 install_php() {
     log_step "Installing PHP..."
     
-    # Add PHP repository for latest versions
-    if ! command -v php &> /dev/null; then
-        add-apt-repository -y ppa:ondrej/php > /dev/null 2>&1 || true
-        apt-get update -y > /dev/null 2>&1
+    # Detect Ubuntu version
+    UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "22.04")
+    log_info "Ubuntu version: $UBUNTU_VERSION"
+    
+    # For Ubuntu 24.04+, use native PHP 8.3
+    # For older versions, use ppa:ondrej/php
+    if [[ "$UBUNTU_VERSION" == "24.04" ]] || [[ "$UBUNTU_VERSION" > "24" ]]; then
+        log_info "Using native PHP 8.3 for Ubuntu 24.04..."
+        PHP_VER="8.3"
+    else
+        log_info "Adding PHP repository for older Ubuntu..."
+        if ! command -v php &> /dev/null; then
+            add-apt-repository -y ppa:ondrej/php 2>&1 | tail -n 3 || true
+            apt-get update -y 2>&1 | tail -n 3
+        fi
+        PHP_VER="8.2"
     fi
     
-    # Install PHP and essential extensions
+    log_info "Installing PHP $PHP_VER packages (this may take a few minutes)..."
+    
+    # Install PHP and essential extensions with visible output
     apt-get install -y \
-        php8.2 \
-        php8.2-cli \
-        php8.2-fpm \
-        php8.2-common \
-        php8.2-mysql \
-        php8.2-zip \
-        php8.2-gd \
-        php8.2-mbstring \
-        php8.2-curl \
-        php8.2-xml \
-        php8.2-bcmath \
-        php8.2-json \
-        php8.2-intl \
-        php8.2-readline \
-        php8.2-opcache \
-        php8.2-redis \
-        > /dev/null 2>&1
+        php${PHP_VER} \
+        php${PHP_VER}-cli \
+        php${PHP_VER}-fpm \
+        php${PHP_VER}-common \
+        php${PHP_VER}-mysql \
+        php${PHP_VER}-zip \
+        php${PHP_VER}-gd \
+        php${PHP_VER}-mbstring \
+        php${PHP_VER}-curl \
+        php${PHP_VER}-xml \
+        php${PHP_VER}-bcmath \
+        php${PHP_VER}-intl \
+        php${PHP_VER}-readline \
+        php${PHP_VER}-opcache \
+        2>&1 | grep -E "(Unpacking|Setting up|php)" | tail -n 10
+    
+    # Install redis extension separately (may not exist on all systems)
+    apt-get install -y php${PHP_VER}-redis 2>/dev/null || log_warning "php-redis not available, will install later"
     
     # Verify installation
-    PHP_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -d "." -f 1,2)
-    log_success "PHP $PHP_VERSION installed successfully"
+    if command -v php &> /dev/null; then
+        PHP_VERSION=$(php -v | head -n 1 | cut -d " " -f 2 | cut -d "." -f 1,2)
+        log_success "PHP $PHP_VERSION installed successfully"
+    else
+        log_error "PHP installation failed!"
+        exit 1
+    fi
 }
 
 setup_installer_directory() {
