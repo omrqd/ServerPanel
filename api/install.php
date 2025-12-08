@@ -58,6 +58,8 @@ function handleInstall($component, $config)
             return installMySQL($config);
         case 'redis':
             return installRedis($config);
+        case 'github':
+            return installGitHub($config);
         default:
             return ['success' => false, 'message' => 'Unknown component'];
     }
@@ -352,9 +354,61 @@ server {
     // PHP info for testing
     file_put_contents("{$webRoot}/public/info.php", "<?php phpinfo(); ?>");
 
-    // Set permissions
+    // === DIRECTORY PERMISSIONS SETUP ===
+    $output[] = 'Setting up directory permissions...';
+
+    // Create essential writable directories for web applications
+    $writableDirs = [
+        "{$webRoot}/storage",
+        "{$webRoot}/storage/app",
+        "{$webRoot}/storage/app/public",
+        "{$webRoot}/storage/framework",
+        "{$webRoot}/storage/framework/cache",
+        "{$webRoot}/storage/framework/sessions",
+        "{$webRoot}/storage/framework/views",
+        "{$webRoot}/storage/logs",
+        "{$webRoot}/bootstrap/cache",
+        "{$webRoot}/public/uploads",
+        "{$webRoot}/public/images",
+        "{$webRoot}/cache",
+        "{$webRoot}/tmp"
+    ];
+
+    foreach ($writableDirs as $dir) {
+        run_command("mkdir -p {$dir}");
+    }
+
+    // Set base ownership - www-data as owner for web server access
     run_command("chown -R www-data:www-data {$webRoot}");
-    run_command("chmod -R 755 {$webRoot}");
+
+    // Set directory permissions (775 = rwxrwxr-x)
+    run_command("find {$webRoot} -type d -exec chmod 775 {} \\;");
+
+    // Set file permissions (664 = rw-rw-r--)
+    run_command("find {$webRoot} -type f -exec chmod 664 {} \\;");
+
+    // Make storage and cache fully writable
+    run_command("chmod -R 775 {$webRoot}/storage");
+    run_command("chmod -R 775 {$webRoot}/public/uploads");
+    run_command("chmod -R 775 {$webRoot}/public/images");
+    run_command("chmod -R 775 {$webRoot}/cache");
+    run_command("chmod -R 775 {$webRoot}/tmp");
+
+    // Ensure bootstrap/cache is writable if it exists
+    if (is_dir("{$webRoot}/bootstrap/cache")) {
+        run_command("chmod -R 775 {$webRoot}/bootstrap/cache");
+    }
+
+    // Add ACL for deploy user to also have write access (if ACL is available)
+    $aclInstalled = run_command('which setfacl 2>/dev/null');
+    if (!empty(trim($aclInstalled))) {
+        run_command("setfacl -R -m u:www-data:rwx {$webRoot}/storage 2>/dev/null || true");
+        run_command("setfacl -R -m u:www-data:rwx {$webRoot}/public/uploads 2>/dev/null || true");
+        run_command("setfacl -R -d -m u:www-data:rwx {$webRoot}/storage 2>/dev/null || true");
+        run_command("setfacl -R -d -m u:www-data:rwx {$webRoot}/public/uploads 2>/dev/null || true");
+    }
+
+    $output[] = 'Directory structure created with proper permissions';
 
     // Test and reload Nginx
     $output[] = 'Testing Nginx configuration...';
@@ -370,7 +424,7 @@ server {
 
     return [
         'success' => true,
-        'message' => 'Nginx configured successfully',
+        'message' => 'Nginx configured with proper permissions',
         'output' => $output
     ];
 }
@@ -524,6 +578,148 @@ appendonly no
         'message' => 'Redis installed successfully',
         'output' => $output
     ];
+}
+
+/**
+ * Install GitHub deployment configuration
+ */
+function installGitHub($config)
+{
+    $output = [];
+    $domain = $config['domain'] ?? 'localhost';
+    $repo = $config['githubRepo'] ?? '';
+    $branch = $config['githubBranch'] ?? 'main';
+    $deployUser = 'deploy';
+    $webRoot = "/var/www/{$domain}";
+
+    $output[] = 'Setting up GitHub deployment...';
+
+    // Create deploy user if it doesn't exist
+    $userExists = trim(run_command("id -u {$deployUser} 2>/dev/null"));
+    if (empty($userExists)) {
+        $output[] = "Creating deploy user '{$deployUser}'...";
+        run_command("useradd -m -s /bin/bash {$deployUser}");
+        run_command("usermod -aG www-data {$deployUser}");
+    }
+
+    // Create .ssh directory
+    $sshDir = "/home/{$deployUser}/.ssh";
+    run_command("mkdir -p {$sshDir}");
+    run_command("chmod 700 {$sshDir}");
+
+    // Generate SSH key pair for GitHub Actions
+    $keyPath = "{$sshDir}/github_deploy";
+    if (!file_exists($keyPath)) {
+        $output[] = 'Generating SSH key pair...';
+        run_command("ssh-keygen -t ed25519 -f {$keyPath} -N '' -C 'github-actions-deploy'");
+    }
+
+    // Read the public key
+    $publicKey = trim(file_get_contents("{$keyPath}.pub"));
+    $output[] = 'SSH key generated successfully';
+
+    // Set proper ownership
+    run_command("chown -R {$deployUser}:{$deployUser} {$sshDir}");
+    run_command("chmod 600 {$keyPath}");
+    run_command("chmod 644 {$keyPath}.pub");
+
+    // Add authorized key for deployment
+    $authorizedKeys = "{$sshDir}/authorized_keys";
+    if (!file_exists($authorizedKeys) || strpos(file_get_contents($authorizedKeys), $publicKey) === false) {
+        file_put_contents($authorizedKeys, $publicKey . "\n", FILE_APPEND);
+        run_command("chmod 600 {$authorizedKeys}");
+        run_command("chown {$deployUser}:{$deployUser} {$authorizedKeys}");
+    }
+
+    // Give deploy user access to web root
+    run_command("chown -R {$deployUser}:www-data {$webRoot}");
+    run_command("chmod -R 775 {$webRoot}");
+
+    // Get server IP
+    $serverIp = trim(run_command('curl -s -4 ifconfig.me 2>/dev/null'));
+    $sshPort = $config['sshPort'] ?? 22;
+
+    // Generate GitHub Actions workflow YAML
+    $workflowYaml = generateGitHubWorkflow($domain, $branch, $deployUser, $serverIp, $sshPort, $webRoot);
+
+    $output[] = 'Deploy user configured with web root access';
+    $output[] = "Web root: {$webRoot}";
+    $output[] = '';
+    $output[] = '📋 Next steps:';
+    $output[] = '1. Copy the SSH public key below';
+    $output[] = '2. Add it to GitHub: Repo → Settings → Deploy Keys';
+    $output[] = '3. Add the private key as a GitHub Secret named DEPLOY_SSH_KEY';
+    $output[] = '4. Create .github/workflows/deploy.yml with the workflow below';
+
+    return [
+        'success' => true,
+        'message' => 'GitHub deployment configured',
+        'output' => $output,
+        'sshPublicKey' => $publicKey,
+        'workflowYaml' => $workflowYaml,
+        'privateKeyPath' => $keyPath
+    ];
+}
+
+/**
+ * Generate GitHub Actions workflow YAML
+ */
+function generateGitHubWorkflow($domain, $branch, $deployUser, $serverIp, $sshPort, $webRoot)
+{
+    return "name: Deploy to Production
+
+on:
+  push:
+    branches: [{$branch}]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          extensions: mbstring, xml, curl
+      
+      - name: Install Composer dependencies
+        run: composer install --no-dev --optimize-autoloader
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install npm dependencies
+        run: npm ci
+      
+      - name: Build assets
+        run: npm run build
+      
+      - name: Deploy to server
+        uses: appleboy/ssh-action@v1.0.0
+        with:
+          host: {$serverIp}
+          username: {$deployUser}
+          key: \${{ secrets.DEPLOY_SSH_KEY }}
+          port: {$sshPort}
+          script: |
+            cd {$webRoot}
+            git pull origin {$branch}
+            composer install --no-dev --optimize-autoloader
+            npm ci
+            npm run build
+            php artisan migrate --force || true
+            php artisan cache:clear || true
+            php artisan config:cache || true
+            sudo systemctl reload php*-fpm
+";
 }
 
 /**

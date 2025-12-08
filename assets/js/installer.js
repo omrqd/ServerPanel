@@ -14,6 +14,7 @@ const CONFIG = {
         { id: 'nginx', title: 'Nginx', icon: '🌐' },
         { id: 'mysql', title: 'MySQL', icon: '🗃️' },
         { id: 'redis', title: 'Redis', icon: '⚡' },
+        { id: 'github', title: 'GitHub', icon: '🐙' },
         { id: 'testing', title: 'Testing', icon: '✅' },
         { id: 'complete', title: 'Complete', icon: '🎉' }
     ]
@@ -29,10 +30,18 @@ let state = {
         swapSize: 2,
         mysqlRootPassword: '',
         enableFail2ban: true,
-        enableUfw: true
+        enableUfw: true,
+        enableGithub: true,
+        githubRepo: '',
+        githubBranch: 'main'
     },
     completed: {},
-    testResults: {}
+    testResults: {},
+    githubData: {
+        sshPublicKey: '',
+        deployUser: 'deploy',
+        workflowYaml: ''
+    }
 };
 
 // Initialize
@@ -84,6 +93,7 @@ function getStepContent(stepId) {
         nginx: getNginxContent(),
         mysql: getMySQLContent(),
         redis: getRedisContent(),
+        github: getGitHubContent(),
         testing: getTestingContent(),
         complete: getCompleteContent()
     };
@@ -330,7 +340,7 @@ function getNginxContent() {
             
             <div class="space-y-4 mb-6">
                 <div class="p-4 bg-white/5 rounded-xl">
-                    <h3 class="font-semibold mb-2">Configuration Includes:</h3>
+                    <h3 class="font-semibold mb-2">🔧 Server Configuration:</h3>
                     <ul class="text-sm text-gray-400 space-y-1">
                         <li>✓ Gzip compression</li>
                         <li>✓ Security headers (XSS, HSTS, etc.)</li>
@@ -339,6 +349,24 @@ function getNginxContent() {
                         <li>✓ Rate limiting</li>
                         <li>✓ Domain: <span class="text-primary-400">${state.config.domain || 'Not set'}</span></li>
                     </ul>
+                </div>
+                
+                <div class="p-4 bg-white/5 rounded-xl">
+                    <h3 class="font-semibold mb-2">📁 Directory Permissions:</h3>
+                    <p class="text-sm text-gray-400 mb-2">Creates writable directories for your app:</p>
+                    <ul class="text-sm text-gray-500 space-y-1 grid grid-cols-2 gap-1">
+                        <li>📂 /storage</li>
+                        <li>📂 /storage/logs</li>
+                        <li>📂 /storage/app</li>
+                        <li>📂 /cache</li>
+                        <li>📂 /public/uploads</li>
+                        <li>📂 /public/images</li>
+                        <li>📂 /bootstrap/cache</li>
+                        <li>📂 /tmp</li>
+                    </ul>
+                    <p class="text-xs text-gray-500 mt-2">
+                        Permissions: Directories 775, Files 664 • Owner: www-data
+                    </p>
                 </div>
             </div>
             
@@ -449,6 +477,92 @@ function getRedisContent() {
                 <span id="redis-btn-text">Install Redis</span>
             </button>
             <div id="redis-output" class="console-output mt-4 hidden"></div>
+        </div>
+    `;
+}
+
+// GitHub Step
+function getGitHubContent() {
+    return `
+        <div class="glass-card p-8">
+            <div class="flex items-center gap-4 mb-6">
+                <div class="w-12 h-12 rounded-xl bg-gray-500/20 flex items-center justify-center text-2xl">
+                    🐙
+                </div>
+                <div>
+                    <h2 class="text-2xl font-bold">GitHub Deployment</h2>
+                    <p class="text-gray-400">Setup automated deployments from GitHub</p>
+                </div>
+            </div>
+            
+            <div class="space-y-6">
+                <!-- Enable/Disable -->
+                <div class="flex items-center justify-between p-4 bg-white/5 rounded-xl">
+                    <div>
+                        <h3 class="font-semibold">Enable GitHub Actions Deployment</h3>
+                        <p class="text-sm text-gray-500">Create deploy user and SSH keys for CI/CD</p>
+                    </div>
+                    <div class="toggle-switch ${state.config.enableGithub ? 'active' : ''}" onclick="toggleConfig('enableGithub'); renderCurrentStep();"></div>
+                </div>
+                
+                ${state.config.enableGithub ? `
+                <!-- Repository URL -->
+                <div class="p-4 bg-white/5 rounded-xl">
+                    <label class="block text-sm font-medium mb-2">GitHub Repository</label>
+                    <input type="text" 
+                           id="github-repo" 
+                           class="input-field" 
+                           placeholder="username/repository"
+                           value="${state.config.githubRepo}">
+                    <p class="text-xs text-gray-500 mt-2">e.g., myuser/my-php-app</p>
+                </div>
+                
+                <!-- Branch -->
+                <div class="p-4 bg-white/5 rounded-xl">
+                    <label class="block text-sm font-medium mb-2">Deploy Branch</label>
+                    <input type="text" 
+                           id="github-branch" 
+                           class="input-field w-48" 
+                           placeholder="main"
+                           value="${state.config.githubBranch}">
+                </div>
+                
+                <!-- SSH Key Display -->
+                <div class="p-4 bg-white/5 rounded-xl" id="github-ssh-section" style="display: ${state.githubData.sshPublicKey ? 'block' : 'none'}">
+                    <h3 class="font-semibold mb-3">🔑 Deploy SSH Key</h3>
+                    <p class="text-sm text-gray-400 mb-3">Add this key to your GitHub repository's Deploy Keys:</p>
+                    <div class="bg-black/30 rounded-lg p-3 font-mono text-xs break-all" id="ssh-key-display">
+                        ${state.githubData.sshPublicKey || 'Key will appear here after setup'}
+                    </div>
+                    <button class="btn-secondary mt-3" onclick="copyToClipboard(state.githubData.sshPublicKey)">
+                        📋 Copy SSH Key
+                    </button>
+                </div>
+                
+                <!-- Workflow YAML -->
+                <div class="p-4 bg-white/5 rounded-xl" id="github-workflow-section" style="display: ${state.githubData.workflowYaml ? 'block' : 'none'}">
+                    <h3 class="font-semibold mb-3">📄 GitHub Actions Workflow</h3>
+                    <p class="text-sm text-gray-400 mb-3">Save this as <code>.github/workflows/deploy.yml</code> in your repo:</p>
+                    <div class="bg-black/30 rounded-lg p-3 font-mono text-xs max-h-48 overflow-y-auto" id="workflow-yaml-display">
+                        <pre>${state.githubData.workflowYaml || 'Workflow will appear here after setup'}</pre>
+                    </div>
+                    <button class="btn-secondary mt-3" onclick="copyToClipboard(state.githubData.workflowYaml)">
+                        📋 Copy Workflow YAML
+                    </button>
+                </div>
+                ` : `
+                <div class="p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+                    <p class="text-sm text-blue-300">
+                        GitHub deployment is disabled. Enable it to set up automated deployments.
+                    </p>
+                </div>
+                `}
+            </div>
+            
+            <button class="btn-primary w-full mt-6" onclick="setupGitHub()" ${!state.config.enableGithub ? 'disabled' : ''}>
+                <span id="github-btn-text">🚀 Setup GitHub Deployment</span>
+            </button>
+            <div id="github-output" class="console-output mt-4 hidden"></div>
         </div>
     `;
 }
@@ -813,6 +927,74 @@ async function repairAllFailed() {
             await repairComponent(component);
             await new Promise(r => setTimeout(r, 500));
         }
+    }
+}
+
+// Setup GitHub deployment
+async function setupGitHub() {
+    const btnText = document.getElementById('github-btn-text');
+    const output = document.getElementById('github-output');
+
+    // Get input values
+    state.config.githubRepo = document.getElementById('github-repo')?.value || '';
+    state.config.githubBranch = document.getElementById('github-branch')?.value || 'main';
+
+    if (!state.config.githubRepo) {
+        showToast('Please enter your GitHub repository', 'error');
+        return;
+    }
+
+    btnText.innerHTML = '<span class="spinner"></span> Setting up...';
+    output.classList.remove('hidden');
+    output.innerHTML = '<div class="console-line info">Configuring GitHub deployment...</div>';
+
+    try {
+        const response = await fetch(CONFIG.apiEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'install',
+                component: 'github',
+                config: state.config
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            output.innerHTML += `<div class="console-line success">✓ ${result.message}</div>`;
+            btnText.textContent = '✓ Configured';
+            state.completed.github = true;
+            showToast('GitHub deployment configured!', 'success');
+
+            // Store the generated data
+            if (result.sshPublicKey) {
+                state.githubData.sshPublicKey = result.sshPublicKey;
+            }
+            if (result.workflowYaml) {
+                state.githubData.workflowYaml = result.workflowYaml;
+            }
+
+            // Re-render to show the keys
+            renderCurrentStep();
+
+            // Show output
+            if (result.output) {
+                const outputEl = document.getElementById('github-output');
+                outputEl.classList.remove('hidden');
+                result.output.forEach(line => {
+                    outputEl.innerHTML += `<div class="console-line">${line}</div>`;
+                });
+            }
+        } else {
+            output.innerHTML += `<div class="console-line error">✗ ${result.message}</div>`;
+            btnText.textContent = 'Retry Setup';
+            showToast(`Error: ${result.message}`, 'error');
+        }
+    } catch (error) {
+        output.innerHTML += `<div class="console-line error">Error: ${error.message}</div>`;
+        btnText.textContent = 'Retry Setup';
+        showToast('GitHub setup failed', 'error');
     }
 }
 
