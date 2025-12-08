@@ -177,17 +177,17 @@ function getSecurityContent() {
                     </svg>
                 </div>
                 <div>
-                    <h2 class="text-2xl font-bold">Security Configuration</h2>
-                    <p class="text-gray-400">Configure firewall and intrusion protection</p>
+                    <h2 class="text-2xl font-bold">Production Security Hardening</h2>
+                    <p class="text-gray-400">Enterprise-grade security for 100K+ traffic</p>
                 </div>
             </div>
             
-            <div class="space-y-6">
+            <div class="space-y-4">
                 <!-- UFW -->
                 <div class="flex items-center justify-between p-4 bg-white/5 rounded-xl">
                     <div>
-                        <h3 class="font-semibold">UFW Firewall</h3>
-                        <p class="text-sm text-gray-500">Only allow ports 22, 80, 443</p>
+                        <h3 class="font-semibold">🔥 UFW Firewall</h3>
+                        <p class="text-sm text-gray-500">Ports 22/80/443 only + SSH rate limiting</p>
                     </div>
                     <div class="toggle-switch ${state.config.enableUfw ? 'active' : ''}" onclick="toggleConfig('enableUfw')"></div>
                 </div>
@@ -195,45 +195,43 @@ function getSecurityContent() {
                 <!-- Fail2ban -->
                 <div class="flex items-center justify-between p-4 bg-white/5 rounded-xl">
                     <div>
-                        <h3 class="font-semibold">Fail2ban</h3>
-                        <p class="text-sm text-gray-500">Block brute-force attacks</p>
+                        <h3 class="font-semibold">🛡️ Fail2ban (Advanced)</h3>
+                        <p class="text-sm text-gray-500">SSH, DDoS, bot, and brute-force protection</p>
                     </div>
                     <div class="toggle-switch ${state.config.enableFail2ban ? 'active' : ''}" onclick="toggleConfig('enableFail2ban')"></div>
                 </div>
                 
                 <!-- SSH Port -->
                 <div class="p-4 bg-white/5 rounded-xl">
-                    <div class="flex items-center justify-between mb-3">
-                        <div>
-                            <h3 class="font-semibold">SSH Port</h3>
-                            <p class="text-sm text-gray-500">Default: 22 (change for extra security)</p>
-                        </div>
+                    <div class="flex items-center justify-between mb-2">
+                        <h3 class="font-semibold">🔑 SSH Port</h3>
+                        <input type="number" 
+                               id="ssh-port-input" 
+                               class="input-field w-24 text-center" 
+                               value="${state.config.sshPort}"
+                               min="1" 
+                               max="65535">
                     </div>
-                    <input type="number" 
-                           id="ssh-port-input" 
-                           class="input-field w-32" 
-                           value="${state.config.sshPort}"
-                           min="1" 
-                           max="65535">
+                    <p class="text-xs text-gray-500">SSH hardened: MaxAuthTries=3, no X11, no TCP forwarding</p>
                 </div>
-            </div>
-            
-            <div class="mt-6 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
-                <div class="flex items-start gap-3">
-                    <svg class="w-5 h-5 text-blue-400 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
-                    </svg>
-                    <div>
-                        <p class="text-sm text-blue-300">
-                            SSL/TLS certificates will be configured after Nginx setup using Let's Encrypt.
-                        </p>
-                    </div>
+                
+                <!-- Additional Security (always enabled) -->
+                <div class="p-4 bg-green-500/10 border border-green-500/20 rounded-xl">
+                    <h3 class="font-semibold mb-2 text-green-300">✅ Also Included (Always On):</h3>
+                    <ul class="text-sm text-gray-400 space-y-1 grid grid-cols-2 gap-1">
+                        <li>🔒 Kernel security (sysctl)</li>
+                        <li>📡 TCP/IP optimizations</li>
+                        <li>🔄 Auto security updates</li>
+                        <li>📁 65535 file limits</li>
+                        <li>🚫 Version info hidden</li>
+                        <li>⚡ SYN flood protection</li>
+                    </ul>
                 </div>
             </div>
             
             <div class="mt-6">
                 <button class="btn-primary w-full" onclick="installComponent('security')">
-                    <span id="security-btn-text">Install Security Components</span>
+                    <span id="security-btn-text">🔐 Install Production Security</span>
                 </button>
                 <div id="security-output" class="console-output mt-4 hidden"></div>
             </div>

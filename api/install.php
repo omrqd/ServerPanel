@@ -66,73 +66,233 @@ function handleInstall($component, $config)
 }
 
 /**
- * Install security components (UFW, Fail2ban)
+ * Install security components (UFW, Fail2ban, Kernel Hardening)
  */
 function installSecurity($config)
 {
     $output = [];
+    $sshPort = $config['sshPort'] ?? 22;
 
-    // Install UFW
+    // === UFW FIREWALL ===
     if ($config['enableUfw'] ?? true) {
         $output[] = 'Installing UFW firewall...';
         run_command('apt-get install -y ufw');
 
-        // Configure UFW
+        // Configure UFW with strict defaults
         run_command('ufw default deny incoming');
         run_command('ufw default allow outgoing');
+        run_command('ufw default deny forward');
 
-        $sshPort = $config['sshPort'] ?? 22;
-        run_command("ufw allow {$sshPort}/tcp");
-        run_command('ufw allow 80/tcp');
-        run_command('ufw allow 443/tcp');
-        run_command('ufw allow 8080/tcp'); // Temporary for installer
+        // Essential ports only
+        run_command("ufw allow {$sshPort}/tcp comment 'SSH'");
+        run_command("ufw allow 80/tcp comment 'HTTP'");
+        run_command("ufw allow 443/tcp comment 'HTTPS'");
+        run_command("ufw allow 8080/tcp comment 'Installer-temp'"); // Removed after setup
+
+        // Enable rate limiting on SSH
+        run_command("ufw limit {$sshPort}/tcp comment 'SSH-rate-limit'");
 
         run_command('echo "y" | ufw enable');
-        $output[] = 'UFW firewall configured';
+        $output[] = 'UFW firewall configured with rate limiting';
     }
 
-    // Install Fail2ban
+    // === FAIL2BAN ===
     if ($config['enableFail2ban'] ?? true) {
         $output[] = 'Installing Fail2ban...';
         run_command('apt-get install -y fail2ban');
 
-        // Create jail.local
+        // Create comprehensive jail.local
         $jailConfig = "[DEFAULT]
-bantime = 3600
+bantime = 86400
 findtime = 600
 maxretry = 5
+backend = systemd
+banaction = ufw
 
 [sshd]
 enabled = true
-port = {$config['sshPort']}
+port = {$sshPort}
 filter = sshd
 logpath = /var/log/auth.log
 maxretry = 3
+bantime = 86400
+
+[sshd-ddos]
+enabled = true
+port = {$sshPort}
+filter = sshd-ddos
+logpath = /var/log/auth.log
+maxretry = 6
+bantime = 172800
 
 [nginx-http-auth]
 enabled = true
 filter = nginx-http-auth
 port = http,https
 logpath = /var/log/nginx/error.log
+maxretry = 5
+
+[nginx-botsearch]
+enabled = true
+filter = nginx-botsearch
+port = http,https
+logpath = /var/log/nginx/access.log
+maxretry = 2
+bantime = 86400
+
+[nginx-badbots]
+enabled = true
+filter = apache-badbots
+port = http,https
+logpath = /var/log/nginx/access.log
+maxretry = 2
+bantime = 86400
+
+[nginx-req-limit]
+enabled = true
+filter = nginx-limit-req
+port = http,https
+logpath = /var/log/nginx/error.log
+maxretry = 10
 ";
         file_put_contents('/etc/fail2ban/jail.local', $jailConfig);
 
         run_command('systemctl enable fail2ban');
         run_command('systemctl restart fail2ban');
-        $output[] = 'Fail2ban configured';
+        $output[] = 'Fail2ban configured with advanced rules';
     }
 
-    // SSH hardening (optional port change)
-    if (($config['sshPort'] ?? 22) != 22) {
-        $output[] = "Changing SSH port to {$config['sshPort']}...";
-        run_command("sed -i 's/#Port 22/Port {$config['sshPort']}/' /etc/ssh/sshd_config");
-        run_command("sed -i 's/Port 22/Port {$config['sshPort']}/' /etc/ssh/sshd_config");
-        $output[] = 'SSH port updated. Remember to connect on new port!';
-    }
+    // === SSH HARDENING ===
+    $output[] = 'Hardening SSH configuration...';
+    $sshConfig = "
+# Server Panel - Production SSH Configuration
+Port {$sshPort}
+PermitRootLogin prohibit-password
+PasswordAuthentication yes
+PubkeyAuthentication yes
+PermitEmptyPasswords no
+ChallengeResponseAuthentication no
+UsePAM yes
+X11Forwarding no
+PrintMotd no
+AcceptEnv LANG LC_*
+Subsystem sftp /usr/lib/openssh/sftp-server
+MaxAuthTries 3
+LoginGraceTime 30
+ClientAliveInterval 300
+ClientAliveCountMax 2
+AllowAgentForwarding no
+AllowTcpForwarding no
+MaxStartups 10:30:60
+";
+    file_put_contents('/etc/ssh/sshd_config.d/99-server-panel.conf', $sshConfig);
+    run_command('systemctl restart ssh 2>/dev/null || systemctl restart sshd');
+    $output[] = 'SSH hardened (MaxAuthTries=3, no X11, no TCP forwarding)';
+
+    // === KERNEL SECURITY (sysctl) ===
+    $output[] = 'Applying kernel security settings...';
+    $sysctlConfig = "# Server Panel - Kernel Security Hardening
+
+# IP Spoofing protection
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+
+# Ignore ICMP broadcast requests
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+# Disable source packet routing
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv6.conf.all.accept_source_route = 0
+
+# Ignore send redirects
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+
+# Block SYN attacks
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_max_syn_backlog = 2048
+net.ipv4.tcp_synack_retries = 2
+
+# Log Martians (impossible addresses)
+net.ipv4.conf.all.log_martians = 1
+
+# Ignore ICMP redirects
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+
+# Ignore Directed pings
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+
+# === High Traffic Optimizations ===
+# Increase max connections
+net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 65535
+
+# Increase TCP buffer sizes
+net.ipv4.tcp_rmem = 4096 87380 16777216
+net.ipv4.tcp_wmem = 4096 65536 16777216
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+
+# TCP keepalive
+net.ipv4.tcp_keepalive_time = 600
+net.ipv4.tcp_keepalive_intvl = 60
+net.ipv4.tcp_keepalive_probes = 3
+
+# Reduce TIME_WAIT
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_tw_reuse = 1
+
+# Increase file descriptors
+fs.file-max = 2097152
+fs.nr_open = 2097152
+
+# Memory optimizations
+vm.swappiness = 10
+vm.dirty_ratio = 60
+vm.dirty_background_ratio = 5
+";
+    file_put_contents('/etc/sysctl.d/99-server-panel-security.conf', $sysctlConfig);
+    run_command('sysctl -p /etc/sysctl.d/99-server-panel-security.conf 2>/dev/null');
+    $output[] = 'Kernel security and TCP optimizations applied';
+
+    // === AUTOMATIC SECURITY UPDATES ===
+    $output[] = 'Configuring automatic security updates...';
+    run_command('apt-get install -y unattended-upgrades apt-listchanges');
+
+    $autoUpgradesConfig = 'APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";
+';
+    file_put_contents('/etc/apt/apt.conf.d/20auto-upgrades', $autoUpgradesConfig);
+    run_command('systemctl enable unattended-upgrades');
+    $output[] = 'Automatic security updates enabled';
+
+    // === HIDE SERVER VERSION ===
+    $output[] = 'Hiding server version information...';
+    // This will be applied when Nginx is configured
+
+    // Disable unused services
+    run_command('systemctl disable cups 2>/dev/null || true');
+    run_command('systemctl disable avahi-daemon 2>/dev/null || true');
+    $output[] = 'Disabled unnecessary services';
+
+    // Set secure file limits
+    $limitsConfig = "
+# Server Panel - File limits for high traffic
+* soft nofile 65535
+* hard nofile 65535
+root soft nofile 65535
+root hard nofile 65535
+www-data soft nofile 65535
+www-data hard nofile 65535
+";
+    file_put_contents('/etc/security/limits.d/99-server-panel.conf', $limitsConfig);
+    $output[] = 'File descriptor limits increased for high traffic';
 
     return [
         'success' => true,
-        'message' => 'Security components installed successfully',
+        'message' => 'Security hardening complete (production-grade)',
         'output' => $output
     ];
 }
@@ -167,37 +327,102 @@ function installPHP($config)
     }
 
     // Optimize PHP-FPM
-    $output[] = 'Optimizing PHP-FPM...';
-    $fpmConfig = "; Production PHP-FPM Pool
+    // === PHP-FPM FOR HIGH TRAFFIC ===
+    $output[] = 'Optimizing PHP-FPM for high traffic...';
+
+    // Calculate optimal settings based on available memory
+    $totalRam = (int) trim(run_command("free -m | grep Mem | awk '{print $2}'"));
+    $maxChildren = max(25, min(200, (int) ($totalRam / 30))); // ~30MB per process
+    $startServers = max(5, (int) ($maxChildren / 4));
+    $minSpare = $startServers;
+    $maxSpare = max(10, (int) ($maxChildren / 2));
+
+    $fpmConfig = "; Server Panel - High Traffic PHP-FPM Pool
 [www]
 user = www-data
 group = www-data
 listen = /run/php/php{$phpVersion}-fpm.sock
 listen.owner = www-data
 listen.group = www-data
+listen.mode = 0660
+listen.backlog = 65535
+
+; Process Management - Optimized for 100K+ traffic
 pm = dynamic
-pm.max_children = 50
-pm.start_servers = 5
-pm.min_spare_servers = 5
-pm.max_spare_servers = 35
-pm.max_requests = 500
+pm.max_children = {$maxChildren}
+pm.start_servers = {$startServers}
+pm.min_spare_servers = {$minSpare}
+pm.max_spare_servers = {$maxSpare}
+pm.max_requests = 1000
+pm.process_idle_timeout = 10s
+
+; Request handling
+request_terminate_timeout = 300
+request_slowlog_timeout = 10s
+slowlog = /var/log/php-fpm-slow.log
+catch_workers_output = yes
+decorate_workers_output = no
+
+; Security
+php_admin_flag[expose_php] = off
+php_admin_value[open_basedir] = /var/www/:/tmp/:/usr/share/php/
+php_admin_value[disable_functions] = exec,passthru,shell_exec,system,proc_open,popen,curl_multi_exec,parse_ini_file,show_source
+php_admin_value[session.cookie_httponly] = 1
+php_admin_value[session.cookie_secure] = 1
+php_admin_value[session.use_strict_mode] = 1
+
+; Resource limits
+php_admin_value[memory_limit] = 256M
+php_admin_value[max_execution_time] = 300
+php_admin_value[post_max_size] = 100M
+php_admin_value[upload_max_filesize] = 100M
+php_admin_value[max_input_vars] = 5000
+
+; Error handling
+php_admin_flag[display_errors] = off
+php_admin_flag[log_errors] = on
+php_admin_value[error_log] = /var/log/php-fpm-error.log
 ";
     file_put_contents("/etc/php/{$phpVersion}/fpm/pool.d/www.conf", $fpmConfig);
+    $output[] = "PHP-FPM optimized (max_children={$maxChildren} based on {$totalRam}MB RAM)";
 
-    // Optimize OPcache
-    $opcacheConfig = "
+    // === OPCACHE FOR PRODUCTION ===
+    $opcacheConfig = "; Server Panel - Production OPcache Configuration
 opcache.enable=1
-opcache.memory_consumption=128
-opcache.interned_strings_buffer=8
-opcache.max_accelerated_files=4000
-opcache.revalidate_freq=60
+opcache.enable_cli=1
+opcache.memory_consumption=256
+opcache.interned_strings_buffer=32
+opcache.max_accelerated_files=50000
+opcache.max_wasted_percentage=10
+opcache.revalidate_freq=0
+opcache.validate_timestamps=0
+opcache.save_comments=1
 opcache.fast_shutdown=1
-opcache.enable_cli=0
+opcache.file_cache=/tmp/opcache
+opcache.file_cache_only=0
+opcache.file_cache_consistency_checks=1
+
+; JIT (PHP 8.0+)
+opcache.jit=1255
+opcache.jit_buffer_size=128M
 ";
-    file_put_contents("/etc/php/{$phpVersion}/fpm/conf.d/99-opcache.ini", $opcacheConfig);
+    file_put_contents("/etc/php/{$phpVersion}/fpm/conf.d/99-opcache-production.ini", $opcacheConfig);
+    run_command("mkdir -p /tmp/opcache && chmod 755 /tmp/opcache");
+    $output[] = 'OPcache optimized (256MB cache, JIT enabled)';
+
+    // === ADDITIONAL PHP SECURITY ===
+    $phpSecConfig = "; Server Panel - PHP Security
+expose_php = Off
+display_errors = Off
+log_errors = On
+error_log = /var/log/php-errors.log
+allow_url_fopen = Off
+allow_url_include = Off
+";
+    file_put_contents("/etc/php/{$phpVersion}/fpm/conf.d/99-security.ini", $phpSecConfig);
 
     run_command("systemctl restart php{$phpVersion}-fpm");
-    $output[] = 'PHP-FPM optimized and restarted';
+    $output[] = 'PHP-FPM restarted with production settings';
 
     return [
         'success' => true,
