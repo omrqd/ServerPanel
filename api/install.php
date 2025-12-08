@@ -252,7 +252,17 @@ function installNginx($config)
     // Get PHP version
     $phpVersion = trim(run_command('php -v | head -n 1 | cut -d " " -f 2 | cut -d "." -f 1,2'));
 
-    // Create Nginx config
+    // Add rate limiting to main nginx.conf (must be in http block)
+    $output[] = 'Configuring rate limiting...';
+    $rateLimitConfig = "
+# Rate limiting zones - added by Server Panel
+limit_req_zone \$binary_remote_addr zone=api:10m rate=10r/s;
+limit_req_zone \$binary_remote_addr zone=general:10m rate=20r/s;
+";
+    // Add to conf.d so it's included in http block
+    file_put_contents('/etc/nginx/conf.d/rate-limit.conf', $rateLimitConfig);
+
+    // Create Nginx site config (without limit_req_zone - that's in conf.d now)
     $output[] = 'Creating Nginx configuration...';
     $nginxConfig = "# {$domain} - Production Configuration
 server {
@@ -274,9 +284,6 @@ server {
     gzip_proxied any;
     gzip_comp_level 6;
     gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss application/atom+xml image/svg+xml;
-
-    # Rate limiting zone
-    limit_req_zone \$binary_remote_addr zone=api:10m rate=10r/s;
 
     # Main location
     location / {
@@ -302,7 +309,7 @@ server {
         deny all;
     }
 
-    # API rate limiting
+    # API rate limiting (uses zone defined in conf.d/rate-limit.conf)
     location /api {
         limit_req zone=api burst=20 nodelay;
         try_files \$uri \$uri/ /index.php?\$query_string;
