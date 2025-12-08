@@ -1,0 +1,755 @@
+/**
+ * Server Panel - Installer JavaScript
+ * Handles step navigation, API calls, and real-time progress
+ */
+
+// Configuration
+const CONFIG = {
+    apiEndpoint: 'api/install.php',
+    steps: [
+        { id: 'welcome', title: 'Welcome', icon: '👋' },
+        { id: 'security', title: 'Security', icon: '🔒' },
+        { id: 'php', title: 'PHP', icon: '🐘' },
+        { id: 'nodejs', title: 'Node.js', icon: '⬢' },
+        { id: 'nginx', title: 'Nginx', icon: '🌐' },
+        { id: 'mysql', title: 'MySQL', icon: '🗃️' },
+        { id: 'redis', title: 'Redis', icon: '⚡' },
+        { id: 'testing', title: 'Testing', icon: '✅' },
+        { id: 'complete', title: 'Complete', icon: '🎉' }
+    ]
+};
+
+// State
+let state = {
+    currentStep: 0,
+    config: {
+        domain: '',
+        sshPort: 22,
+        enableSwap: true,
+        swapSize: 2,
+        mysqlRootPassword: '',
+        enableFail2ban: true,
+        enableUfw: true
+    },
+    completed: {},
+    testResults: {}
+};
+
+// Initialize
+document.addEventListener('DOMContentLoaded', () => {
+    renderProgressSteps();
+    renderCurrentStep();
+    setupEventListeners();
+});
+
+// Render progress steps in header
+function renderProgressSteps() {
+    const container = document.getElementById('progress-steps');
+    container.innerHTML = CONFIG.steps.map((step, index) => `
+        <div class="flex items-center ${index < CONFIG.steps.length - 1 ? 'flex-1' : ''}">
+            <div class="flex flex-col items-center">
+                <div class="step-circle ${index < state.currentStep ? 'completed' : index === state.currentStep ? 'active' : 'inactive'}">
+                    ${index < state.currentStep ? '✓' : step.icon}
+                </div>
+                <span class="text-xs mt-2 ${index === state.currentStep ? 'text-white' : 'text-gray-500'} hidden md:block">
+                    ${step.title}
+                </span>
+            </div>
+            ${index < CONFIG.steps.length - 1 ? `<div class="step-line ${index < state.currentStep ? 'active' : ''} hidden md:block"></div>` : ''}
+        </div>
+    `).join('');
+}
+
+// Render current step content
+function renderCurrentStep() {
+    const container = document.getElementById('step-content');
+    const step = CONFIG.steps[state.currentStep];
+
+    container.innerHTML = getStepContent(step.id);
+    container.classList.add('animate-slide-up');
+
+    // Update navigation buttons
+    document.getElementById('prev-btn').disabled = state.currentStep === 0;
+    document.getElementById('next-btn').textContent =
+        state.currentStep === CONFIG.steps.length - 1 ? 'Finish Setup' : 'Continue →';
+}
+
+// Get HTML content for each step
+function getStepContent(stepId) {
+    const templates = {
+        welcome: getWelcomeContent(),
+        security: getSecurityContent(),
+        php: getPHPContent(),
+        nodejs: getNodeJSContent(),
+        nginx: getNginxContent(),
+        mysql: getMySQLContent(),
+        redis: getRedisContent(),
+        testing: getTestingContent(),
+        complete: getCompleteContent()
+    };
+    return templates[stepId] || '<p>Unknown step</p>';
+}
+
+// Welcome Step
+function getWelcomeContent() {
+    return `
+        <div class="glass-card p-8">
+            <div class="text-center mb-8">
+                <div class="w-20 h-20 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-primary-400 to-purple-500 flex items-center justify-center">
+                    <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"></path>
+                    </svg>
+                </div>
+                <h2 class="text-3xl font-bold gradient-text mb-3">Welcome to Server Panel</h2>
+                <p class="text-gray-400 max-w-xl mx-auto">
+                    Let's configure your production server. This wizard will install and secure 
+                    everything needed for high-traffic PHP + React applications.
+                </p>
+            </div>
+            
+            <div class="max-w-md mx-auto space-y-6">
+                <div>
+                    <label class="block text-sm font-medium text-gray-300 mb-2">
+                        Primary Domain Name
+                    </label>
+                    <input type="text" 
+                           id="domain-input" 
+                           class="input-field" 
+                           placeholder="example.com"
+                           value="${state.config.domain}">
+                    <p class="text-xs text-gray-500 mt-2">
+                        This should be pointed to this server's IP address
+                    </p>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mt-8">
+                <div class="feature-card text-center">
+                    <div class="feature-icon bg-green-500/20 mx-auto">
+                        <svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                        </svg>
+                    </div>
+                    <h3 class="font-semibold mt-3">Secure</h3>
+                    <p class="text-sm text-gray-500 mt-1">UFW, Fail2ban, SSL</p>
+                </div>
+                <div class="feature-card text-center">
+                    <div class="feature-icon bg-blue-500/20 mx-auto">
+                        <svg class="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
+                        </svg>
+                    </div>
+                    <h3 class="font-semibold mt-3">Fast</h3>
+                    <p class="text-sm text-gray-500 mt-1">Optimized for 100K+ traffic</p>
+                </div>
+                <div class="feature-card text-center">
+                    <div class="feature-icon bg-purple-500/20 mx-auto">
+                        <svg class="w-6 h-6 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 7v10c0 2.21 3.582 4 8 4s8-1.79 8-4V7M4 7c0 2.21 3.582 4 8 4s8-1.79 8-4M4 7c0-2.21 3.582-4 8-4s8 1.79 8 4"></path>
+                        </svg>
+                    </div>
+                    <h3 class="font-semibold mt-3">Complete</h3>
+                    <p class="text-sm text-gray-500 mt-1">PHP, Node.js, MySQL, Redis</p>
+                </div>
+            </div>
+        </div>
+    `;
+}
+
+// Security Step
+function getSecurityContent() {
+    return `
+        <div class="glass-card p-8">
+            <div class="flex items-center gap-4 mb-6">
+                <div class="w-12 h-12 rounded-xl bg-green-500/20 flex items-center justify-center">
+                    <svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path>
+                    </svg>
+                </div>
+                <div>
+                    <h2 class="text-2xl font-bold">Security Configuration</h2>
+                    <p class="text-gray-400">Configure firewall and intrusion protection</p>
+                </div>
+            </div>
+            
+            <div class="space-y-6">
+                <!-- UFW -->
+                <div class="flex items-center justify-between p-4 bg-white/5 rounded-xl">
+                    <div>
+                        <h3 class="font-semibold">UFW Firewall</h3>
+                        <p class="text-sm text-gray-500">Only allow ports 22, 80, 443</p>
+                    </div>
+                    <div class="toggle-switch ${state.config.enableUfw ? 'active' : ''}" onclick="toggleConfig('enableUfw')"></div>
+                </div>
+                
+                <!-- Fail2ban -->
+                <div class="flex items-center justify-between p-4 bg-white/5 rounded-xl">
+                    <div>
+                        <h3 class="font-semibold">Fail2ban</h3>
+                        <p class="text-sm text-gray-500">Block brute-force attacks</p>
+                    </div>
+                    <div class="toggle-switch ${state.config.enableFail2ban ? 'active' : ''}" onclick="toggleConfig('enableFail2ban')"></div>
+                </div>
+                
+                <!-- SSH Port -->
+                <div class="p-4 bg-white/5 rounded-xl">
+                    <div class="flex items-center justify-between mb-3">
+                        <div>
+                            <h3 class="font-semibold">SSH Port</h3>
+                            <p class="text-sm text-gray-500">Default: 22 (change for extra security)</p>
+                        </div>
+                    </div>
+                    <input type="number" 
+                           id="ssh-port-input" 
+                           class="input-field w-32" 
+                           value="${state.config.sshPort}"
+                           min="1" 
+                           max="65535">
+                </div>
+            </div>
+            
+            <div class="mt-6 p-4 bg-blue-500/10 border border-blue-500/20 rounded-xl">
+                <div class="flex items-start gap-3">
+                    <svg class="w-5 h-5 text-blue-400 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path>
+                    </svg>
+                    <div>
+                        <p class="text-sm text-blue-300">
+                            SSL/TLS certificates will be configured after Nginx setup using Let's Encrypt.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="mt-6">
+                <button class="btn-primary w-full" onclick="installComponent('security')">
+                    <span id="security-btn-text">Install Security Components</span>
+                </button>
+                <div id="security-output" class="console-output mt-4 hidden"></div>
+            </div>
+        </div>
+    `;
+}
+
+// PHP Step
+function getPHPContent() {
+    return `
+        <div class="glass-card p-8">
+            <div class="flex items-center gap-4 mb-6">
+                <div class="w-12 h-12 rounded-xl bg-indigo-500/20 flex items-center justify-center text-2xl">
+                    🐘
+                </div>
+                <div>
+                    <h2 class="text-2xl font-bold">PHP Configuration</h2>
+                    <p class="text-gray-400">Verify and install required extensions</p>
+                </div>
+            </div>
+            
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+                ${['cli', 'fpm', 'mysql', 'curl', 'gd', 'mbstring', 'xml', 'zip', 'bcmath', 'intl', 'redis', 'opcache'].map(ext => `
+                    <div class="p-3 bg-white/5 rounded-lg text-center" id="php-ext-${ext}">
+                        <span class="text-sm">${ext}</span>
+                        <span class="status-badge pending ml-2">pending</span>
+                    </div>
+                `).join('')}
+            </div>
+            
+            <div class="p-4 bg-white/5 rounded-xl mb-6">
+                <h3 class="font-semibold mb-2">PHP-FPM Configuration</h3>
+                <p class="text-sm text-gray-500">
+                    Will be optimized for production with proper pool settings, 
+                    memory limits, and OPcache configuration.
+                </p>
+            </div>
+            
+            <button class="btn-primary w-full" onclick="installComponent('php')">
+                <span id="php-btn-text">Verify & Install PHP Extensions</span>
+            </button>
+            <div id="php-output" class="console-output mt-4 hidden"></div>
+        </div>
+    `;
+}
+
+// Node.js Step
+function getNodeJSContent() {
+    return `
+        <div class="glass-card p-8">
+            <div class="flex items-center gap-4 mb-6">
+                <div class="w-12 h-12 rounded-xl bg-green-500/20 flex items-center justify-center text-2xl">
+                    ⬢
+                </div>
+                <div>
+                    <h2 class="text-2xl font-bold">Node.js Installation</h2>
+                    <p class="text-gray-400">Install Node.js 20.x LTS for React builds</p>
+                </div>
+            </div>
+            
+            <div class="space-y-4 mb-6">
+                <div class="p-4 bg-white/5 rounded-xl">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="font-semibold">Node.js 20.x LTS</h3>
+                            <p class="text-sm text-gray-500">Latest stable version</p>
+                        </div>
+                        <span class="status-badge pending" id="nodejs-status">pending</span>
+                    </div>
+                </div>
+                
+                <div class="p-4 bg-white/5 rounded-xl">
+                    <div class="flex items-center justify-between">
+                        <div>
+                            <h3 class="font-semibold">npm Package Manager</h3>
+                            <p class="text-sm text-gray-500">Included with Node.js</p>
+                        </div>
+                        <span class="status-badge pending" id="npm-status">pending</span>
+                    </div>
+                </div>
+            </div>
+            
+            <button class="btn-primary w-full" onclick="installComponent('nodejs')">
+                <span id="nodejs-btn-text">Install Node.js</span>
+            </button>
+            <div id="nodejs-output" class="console-output mt-4 hidden"></div>
+        </div>
+    `;
+}
+
+// Nginx Step
+function getNginxContent() {
+    return `
+        <div class="glass-card p-8">
+            <div class="flex items-center gap-4 mb-6">
+                <div class="w-12 h-12 rounded-xl bg-emerald-500/20 flex items-center justify-center text-2xl">
+                    🌐
+                </div>
+                <div>
+                    <h2 class="text-2xl font-bold">Nginx Web Server</h2>
+                    <p class="text-gray-400">Configure high-performance web server</p>
+                </div>
+            </div>
+            
+            <div class="space-y-4 mb-6">
+                <div class="p-4 bg-white/5 rounded-xl">
+                    <h3 class="font-semibold mb-2">Configuration Includes:</h3>
+                    <ul class="text-sm text-gray-400 space-y-1">
+                        <li>✓ Gzip compression</li>
+                        <li>✓ Security headers (XSS, HSTS, etc.)</li>
+                        <li>✓ PHP-FPM integration</li>
+                        <li>✓ Static file caching</li>
+                        <li>✓ Rate limiting</li>
+                        <li>✓ Domain: <span class="text-primary-400">${state.config.domain || 'Not set'}</span></li>
+                    </ul>
+                </div>
+            </div>
+            
+            <button class="btn-primary w-full" onclick="installComponent('nginx')">
+                <span id="nginx-btn-text">Install & Configure Nginx</span>
+            </button>
+            <div id="nginx-output" class="console-output mt-4 hidden"></div>
+        </div>
+    `;
+}
+
+// MySQL Step
+function getMySQLContent() {
+    return `
+        <div class="glass-card p-8">
+            <div class="flex items-center gap-4 mb-6">
+                <div class="w-12 h-12 rounded-xl bg-orange-500/20 flex items-center justify-center text-2xl">
+                    🗃️
+                </div>
+                <div>
+                    <h2 class="text-2xl font-bold">MySQL Database</h2>
+                    <p class="text-gray-400">Install and configure MySQL 8.0</p>
+                </div>
+            </div>
+            
+            <div class="space-y-6 mb-6">
+                <div class="p-4 bg-white/5 rounded-xl">
+                    <label class="block text-sm font-medium mb-2">MySQL Root Password</label>
+                    <input type="password" 
+                           id="mysql-password" 
+                           class="input-field" 
+                           placeholder="Enter a strong password"
+                           value="${state.config.mysqlRootPassword}">
+                    <p class="text-xs text-gray-500 mt-2">
+                        Min 8 characters, include numbers and special chars
+                    </p>
+                </div>
+                
+                <div class="flex items-center justify-between p-4 bg-white/5 rounded-xl">
+                    <div>
+                        <h3 class="font-semibold">Enable Swap File</h3>
+                        <p class="text-sm text-gray-500">Recommended for low-memory VPS (prevents MySQL crashes)</p>
+                    </div>
+                    <div class="toggle-switch ${state.config.enableSwap ? 'active' : ''}" onclick="toggleConfig('enableSwap')"></div>
+                </div>
+                
+                <div class="p-4 bg-white/5 rounded-xl ${!state.config.enableSwap ? 'opacity-50' : ''}">
+                    <label class="block text-sm font-medium mb-2">Swap Size (GB)</label>
+                    <input type="number" 
+                           id="swap-size" 
+                           class="input-field w-32" 
+                           value="${state.config.swapSize}"
+                           min="1" 
+                           max="8"
+                           ${!state.config.enableSwap ? 'disabled' : ''}>
+                    <p class="text-xs text-gray-500 mt-2">
+                        2GB recommended for 1GB RAM VPS
+                    </p>
+                </div>
+            </div>
+            
+            <div class="p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-xl mb-6">
+                <div class="flex items-start gap-3">
+                    <svg class="w-5 h-5 text-yellow-400 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                    <div>
+                        <p class="text-sm text-yellow-300">
+                            Save your MySQL password! It will also be shown at the end of setup.
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
+            <button class="btn-primary w-full" onclick="installComponent('mysql')">
+                <span id="mysql-btn-text">Install MySQL</span>
+            </button>
+            <div id="mysql-output" class="console-output mt-4 hidden"></div>
+        </div>
+    `;
+}
+
+// Redis Step
+function getRedisContent() {
+    return `
+        <div class="glass-card p-8">
+            <div class="flex items-center gap-4 mb-6">
+                <div class="w-12 h-12 rounded-xl bg-red-500/20 flex items-center justify-center text-2xl">
+                    ⚡
+                </div>
+                <div>
+                    <h2 class="text-2xl font-bold">Redis Cache</h2>
+                    <p class="text-gray-400">Install Redis for session and data caching</p>
+                </div>
+            </div>
+            
+            <div class="p-4 bg-white/5 rounded-xl mb-6">
+                <h3 class="font-semibold mb-2">Configuration:</h3>
+                <ul class="text-sm text-gray-400 space-y-1">
+                    <li>✓ Memory limit: 256MB (configurable)</li>
+                    <li>✓ Maxmemory policy: allkeys-lru</li>
+                    <li>✓ Bind to localhost only</li>
+                    <li>✓ Persistence disabled (cache only)</li>
+                </ul>
+            </div>
+            
+            <button class="btn-primary w-full" onclick="installComponent('redis')">
+                <span id="redis-btn-text">Install Redis</span>
+            </button>
+            <div id="redis-output" class="console-output mt-4 hidden"></div>
+        </div>
+    `;
+}
+
+// Testing Step
+function getTestingContent() {
+    return `
+        <div class="glass-card p-8">
+            <div class="flex items-center gap-4 mb-6">
+                <div class="w-12 h-12 rounded-xl bg-purple-500/20 flex items-center justify-center text-2xl">
+                    ✅
+                </div>
+                <div>
+                    <h2 class="text-2xl font-bold">Component Testing</h2>
+                    <p class="text-gray-400">Verify all installations are working</p>
+                </div>
+            </div>
+            
+            <div class="space-y-4">
+                ${[
+            { id: 'nginx', name: 'Nginx', desc: 'Web server responding' },
+            { id: 'php', name: 'PHP-FPM', desc: 'PHP processing' },
+            { id: 'mysql', name: 'MySQL', desc: 'Database connection' },
+            { id: 'redis', name: 'Redis', desc: 'Cache connection' },
+            { id: 'nodejs', name: 'Node.js', desc: 'Node runtime' }
+        ].map(test => `
+                    <div class="flex items-center justify-between p-4 bg-white/5 rounded-xl">
+                        <div>
+                            <h3 class="font-semibold">${test.name}</h3>
+                            <p class="text-sm text-gray-500">${test.desc}</p>
+                        </div>
+                        <div class="flex items-center gap-3">
+                            <span class="status-badge pending" id="test-${test.id}-status">pending</span>
+                            <button class="btn-test" onclick="testComponent('${test.id}')">Test</button>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+            
+            <button class="btn-success w-full mt-6" onclick="testAllComponents()">
+                Test All Components
+            </button>
+        </div>
+    `;
+}
+
+// Complete Step
+function getCompleteContent() {
+    return `
+        <div class="glass-card p-8 text-center">
+            <div class="w-24 h-24 mx-auto mb-6 rounded-full bg-gradient-to-br from-green-400 to-emerald-500 flex items-center justify-center">
+                <svg class="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                </svg>
+            </div>
+            
+            <h2 class="text-3xl font-bold gradient-text mb-3">Setup Complete!</h2>
+            <p class="text-gray-400 max-w-xl mx-auto mb-8">
+                Your server is now production-ready. Below are your credentials and next steps.
+            </p>
+            
+            <div class="bg-white/5 rounded-xl p-6 text-left mb-8">
+                <h3 class="font-semibold mb-4">Credentials</h3>
+                <div class="space-y-3">
+                    <div>
+                        <label class="text-sm text-gray-500">Domain</label>
+                        <div class="credential-box">
+                            <span id="final-domain">${state.config.domain}</span>
+                            <button class="copy-btn" onclick="copyToClipboard('${state.config.domain}')">Copy</button>
+                        </div>
+                    </div>
+                    <div>
+                        <label class="text-sm text-gray-500">MySQL Root Password</label>
+                        <div class="credential-box">
+                            <span id="final-mysql-pass">••••••••</span>
+                            <button class="copy-btn" onclick="copyToClipboard('${state.config.mysqlRootPassword}')">Copy</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="p-4 bg-red-500/10 border border-red-500/20 rounded-xl mb-8">
+                <div class="flex items-start gap-3">
+                    <svg class="w-5 h-5 text-red-400 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+                    </svg>
+                    <div class="text-left">
+                        <p class="text-sm text-red-300">
+                            <strong>Important:</strong> This installer will now be permanently deleted from your server.
+                            Make sure you've saved all credentials above!
+                        </p>
+                    </div>
+                </div>
+            </div>
+            
+            <button class="btn-primary" onclick="finalizeInstallation()">
+                Complete Setup & Remove Installer
+            </button>
+        </div>
+    `;
+}
+
+// Event Listeners
+function setupEventListeners() {
+    document.getElementById('prev-btn').addEventListener('click', prevStep);
+    document.getElementById('next-btn').addEventListener('click', nextStep);
+}
+
+// Navigation
+function prevStep() {
+    if (state.currentStep > 0) {
+        state.currentStep--;
+        renderProgressSteps();
+        renderCurrentStep();
+    }
+}
+
+function nextStep() {
+    if (state.currentStep === 0) {
+        const domain = document.getElementById('domain-input')?.value;
+        if (!domain) {
+            showToast('Please enter your domain name', 'error');
+            return;
+        }
+        state.config.domain = domain;
+    }
+
+    if (state.currentStep < CONFIG.steps.length - 1) {
+        state.currentStep++;
+        renderProgressSteps();
+        renderCurrentStep();
+    }
+}
+
+// Toggle config options
+function toggleConfig(key) {
+    state.config[key] = !state.config[key];
+    renderCurrentStep();
+}
+
+// Install component
+async function installComponent(component) {
+    const btnText = document.getElementById(`${component}-btn-text`);
+    const output = document.getElementById(`${component}-output`);
+
+    btnText.innerHTML = '<span class="spinner"></span> Installing...';
+    output.classList.remove('hidden');
+    output.innerHTML = '<div class="console-line info">Starting installation...</div>';
+
+    try {
+        // Get config values
+        if (component === 'security') {
+            state.config.sshPort = parseInt(document.getElementById('ssh-port-input')?.value) || 22;
+        } else if (component === 'mysql') {
+            state.config.mysqlRootPassword = document.getElementById('mysql-password')?.value;
+            state.config.swapSize = parseInt(document.getElementById('swap-size')?.value) || 2;
+        }
+
+        const response = await fetch(CONFIG.apiEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'install',
+                component: component,
+                config: state.config
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            output.innerHTML += `<div class="console-line success">✓ ${result.message}</div>`;
+            btnText.textContent = '✓ Installed';
+            state.completed[component] = true;
+            showToast(`${component} installed successfully!`, 'success');
+        } else {
+            output.innerHTML += `<div class="console-line error">✗ ${result.message}</div>`;
+            btnText.textContent = 'Retry Installation';
+            showToast(`Error: ${result.message}`, 'error');
+        }
+
+        if (result.output) {
+            result.output.forEach(line => {
+                output.innerHTML += `<div class="console-line">${line}</div>`;
+            });
+        }
+    } catch (error) {
+        output.innerHTML += `<div class="console-line error">Error: ${error.message}</div>`;
+        btnText.textContent = 'Retry Installation';
+        showToast('Installation failed', 'error');
+    }
+}
+
+// Test component
+async function testComponent(component) {
+    const statusEl = document.getElementById(`test-${component}-status`);
+    statusEl.className = 'status-badge running';
+    statusEl.textContent = 'testing...';
+
+    try {
+        const response = await fetch(CONFIG.apiEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'test',
+                component: component,
+                config: state.config
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            statusEl.className = 'status-badge success';
+            statusEl.textContent = 'passed';
+            state.testResults[component] = true;
+        } else {
+            statusEl.className = 'status-badge error';
+            statusEl.textContent = 'failed';
+            state.testResults[component] = false;
+        }
+    } catch (error) {
+        statusEl.className = 'status-badge error';
+        statusEl.textContent = 'error';
+    }
+}
+
+// Test all components
+async function testAllComponents() {
+    const components = ['nginx', 'php', 'mysql', 'redis', 'nodejs'];
+    for (const component of components) {
+        await testComponent(component);
+        await new Promise(r => setTimeout(r, 500));
+    }
+}
+
+// Finalize installation
+async function finalizeInstallation() {
+    showLoading('Finalizing setup and removing installer...');
+
+    try {
+        const response = await fetch(CONFIG.apiEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'finalize',
+                config: state.config
+            })
+        });
+
+        const result = await response.json();
+
+        hideLoading();
+
+        if (result.success) {
+            showToast('Setup complete! Redirecting...', 'success');
+            setTimeout(() => {
+                window.location.href = `https://${state.config.domain}`;
+            }, 2000);
+        } else {
+            showToast(`Error: ${result.message}`, 'error');
+        }
+    } catch (error) {
+        hideLoading();
+        showToast('Finalization complete. You may close this tab.', 'info');
+    }
+}
+
+// Utility functions
+function showLoading(text = 'Processing...') {
+    const overlay = document.getElementById('loading-overlay');
+    const loadingText = document.getElementById('loading-text');
+    loadingText.textContent = text;
+    overlay.classList.remove('hidden');
+    overlay.classList.add('flex');
+}
+
+function hideLoading() {
+    const overlay = document.getElementById('loading-overlay');
+    overlay.classList.add('hidden');
+    overlay.classList.remove('flex');
+}
+
+function showToast(message, type = 'info') {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = `toast ${type}`;
+
+    const icon = type === 'success' ? '✓' : type === 'error' ? '✗' : 'ℹ';
+    toast.innerHTML = `<span class="text-lg">${icon}</span><span>${message}</span>`;
+
+    container.appendChild(toast);
+
+    setTimeout(() => {
+        toast.style.opacity = '0';
+        setTimeout(() => toast.remove(), 300);
+    }, 4000);
+}
+
+function copyToClipboard(text) {
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('Copied to clipboard!', 'success');
+    });
+}

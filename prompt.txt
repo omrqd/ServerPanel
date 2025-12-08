@@ -1,0 +1,21 @@
+in this project called "server-panel", this project supposed to be cloned or installed in freshly installed vps digitalocean/aws etc.. linux servers, what it does, it supposed to manage the entire freshly installed linux vps, make it super secure for production server that supposed to handle massive api requests and website traffic (+100K)
+now here is how it works:
+the shell file supposed to install neccesarry dependancies first and install php, because then after installing php the shell should show the user to connect to http://{domain_name} to continue the server setup in beautiful ui frontend enviroment.
+now, in the web based installer, we will:
+- install security things like ufw/fail2ban certbit ...
+- install php (already installed but check required dependcies) and its extenstions
+- install nodejs
+- configure web server to secure it and add the main website domain (e.g. gdwaa.com - user add it)
+- add default page there
+- install mysql and set password for it
+- for low vps memory sometimes users get (root@Gdwaa:/var/www/https:/gdwaa.com# mysql
+ERROR 2002 (HY000): Can't connect to local MySQL server through socket '/var/run/mysqld/mysqld.sock' (2)) something like this so also swap and manage that in mysql by default and allow that to be changed (if its going to effect the traffic handled in the site later)
+- server supposed to handle framework that runs on php and has React as frontend at the same port/site/directory, so install everything needed for that
+- allow user to test each thing, for example after installing mysql allow to test connnection to it
+- installing reddis for caching
+- install and secure everything including and whatever you think is neccessary for the server to run production-ready immedialty after the installer finishes
+- after that, the installer file should be compleltry removed from the server and deletd (after completing everything)
+
+make the design of the ui beautiful and you can use tailwind css for that.
+
+
