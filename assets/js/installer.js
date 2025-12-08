@@ -624,6 +624,9 @@ async function installComponent(component) {
             btnText.textContent = '✓ Installed';
             state.completed[component] = true;
             showToast(`${component} installed successfully!`, 'success');
+
+            // Update status badges based on component
+            updateComponentBadges(component);
         } else {
             output.innerHTML += `<div class="console-line error">✗ ${result.message}</div>`;
             btnText.textContent = 'Retry Installation';
@@ -639,6 +642,33 @@ async function installComponent(component) {
         output.innerHTML += `<div class="console-line error">Error: ${error.message}</div>`;
         btnText.textContent = 'Retry Installation';
         showToast('Installation failed', 'error');
+    }
+}
+
+// Update status badges after installation
+function updateComponentBadges(component) {
+    if (component === 'php') {
+        // Update all PHP extension badges to success
+        const extensions = ['cli', 'fpm', 'mysql', 'curl', 'gd', 'mbstring', 'xml', 'zip', 'bcmath', 'intl', 'redis', 'opcache'];
+        extensions.forEach(ext => {
+            const badge = document.querySelector(`#php-ext-${ext} .status-badge`);
+            if (badge) {
+                badge.className = 'status-badge success ml-2';
+                badge.textContent = 'installed';
+            }
+        });
+    } else if (component === 'nodejs') {
+        // Update Node.js and npm badges
+        const nodeStatus = document.getElementById('nodejs-status');
+        const npmStatus = document.getElementById('npm-status');
+        if (nodeStatus) {
+            nodeStatus.className = 'status-badge success';
+            nodeStatus.textContent = 'installed';
+        }
+        if (npmStatus) {
+            npmStatus.className = 'status-badge success';
+            npmStatus.textContent = 'installed';
+        }
     }
 }
 
