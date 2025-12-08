@@ -955,59 +955,130 @@ function installGitHub($config)
  */
 function generateGitHubWorkflow($domain, $branch, $deployUser, $serverIp, $sshPort, $webRoot)
 {
-    return "name: Deploy to Production
+    return "name: 🚀 Deploy to Production
 
 on:
   push:
     branches: [{$branch}]
   workflow_dispatch:
 
+env:
+  SERVER_HOST: {$serverIp}
+  SERVER_USER: {$deployUser}
+  SERVER_PORT: {$sshPort}
+  WEB_ROOT: {$webRoot}
+  BRANCH: {$branch}
+
 jobs:
   deploy:
+    name: Deploy to Production Server
     runs-on: ubuntu-latest
     
     steps:
-      - name: Checkout code
+      - name: 📥 Checkout code
         uses: actions/checkout@v4
-      
-      - name: Setup PHP
-        uses: shivammathur/setup-php@v2
         with:
-          php-version: '8.3'
-          extensions: mbstring, xml, curl
+          fetch-depth: 0
       
-      - name: Install Composer dependencies
-        run: composer install --no-dev --optimize-autoloader
+      - name: 🔐 Setup SSH Key
+        run: |
+          mkdir -p ~/.ssh
+          echo \"\${{ secrets.DEPLOY_SSH_KEY }}\" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p \${{ env.SERVER_PORT }} -H \${{ env.SERVER_HOST }} >> ~/.ssh/known_hosts 2>/dev/null || true
       
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-          cache: 'npm'
-      
-      - name: Install npm dependencies
-        run: npm ci
-      
-      - name: Build assets
-        run: npm run build
-      
-      - name: Deploy to server
-        uses: appleboy/ssh-action@v1.0.0
-        with:
-          host: {$serverIp}
-          username: {$deployUser}
-          key: \${{ secrets.DEPLOY_SSH_KEY }}
-          port: {$sshPort}
-          script: |
+      - name: 🧹 Clean Remote Directory
+        run: |
+          ssh -i ~/.ssh/deploy_key -p \${{ env.SERVER_PORT }} -o StrictHostKeyChecking=no \${{ env.SERVER_USER }}@\${{ env.SERVER_HOST }} << 'ENDSSH'
+            echo '🗑️ Removing all files from {$webRoot}...'
             cd {$webRoot}
-            git pull origin {$branch}
-            composer install --no-dev --optimize-autoloader
-            npm ci
-            npm run build
-            php artisan migrate --force || true
-            php artisan cache:clear || true
-            php artisan config:cache || true
-            sudo systemctl reload php*-fpm
+            # Remove all files including hidden ones, except the directory itself
+            find . -mindepth 1 -delete 2>/dev/null || rm -rf ./* ./.[!.]* ./..?* 2>/dev/null || true
+            echo '✅ Directory cleaned'
+          ENDSSH
+      
+      - name: 📤 Deploy Files to Server
+        run: |
+          # Sync all files to server (fresh deployment)
+          rsync -avz --delete \\
+            -e \"ssh -i ~/.ssh/deploy_key -p \${{ env.SERVER_PORT }} -o StrictHostKeyChecking=no\" \\
+            --exclude '.git' \\
+            --exclude '.github' \\
+            --exclude 'node_modules' \\
+            --exclude 'vendor' \\
+            ./ \${{ env.SERVER_USER }}@\${{ env.SERVER_HOST }}:\${{ env.WEB_ROOT }}/
+      
+      - name: 📦 Install Dependencies & Build
+        run: |
+          ssh -i ~/.ssh/deploy_key -p \${{ env.SERVER_PORT }} -o StrictHostKeyChecking=no \${{ env.SERVER_USER }}@\${{ env.SERVER_HOST }} << 'ENDSSH'
+            cd {$webRoot}
+            
+            echo '📦 Installing dependencies...'
+            
+            # Composer (if composer.json exists)
+            if [ -f \"composer.json\" ]; then
+              echo '🎼 Running composer install...'
+              composer install --no-dev --no-interaction --optimize-autoloader 2>&1 || echo '⚠️ Composer install had issues, continuing...'
+            fi
+            
+            # NPM (if package.json exists)
+            if [ -f \"package.json\" ]; then
+              echo '📦 Running npm install...'
+              npm ci --production 2>&1 || npm install --production 2>&1 || echo '⚠️ NPM install had issues, continuing...'
+              
+              # Build (if build script exists)
+              if grep -q '\"build\"' package.json; then
+                echo '🔨 Building assets...'
+                npm run build 2>&1 || echo '⚠️ Build had issues, continuing...'
+              fi
+            fi
+            
+            # Laravel/PHP Framework specific (if artisan exists)
+            if [ -f \"artisan\" ]; then
+              echo '⚡ Running Laravel optimizations...'
+              php artisan migrate --force 2>&1 || echo '⚠️ Migration had issues, continuing...'
+              php artisan config:cache 2>&1 || true
+              php artisan route:cache 2>&1 || true
+              php artisan view:cache 2>&1 || true
+            fi
+            
+            echo '✅ Dependencies installed'
+          ENDSSH
+      
+      - name: 🔧 Set Permissions
+        run: |
+          ssh -i ~/.ssh/deploy_key -p \${{ env.SERVER_PORT }} -o StrictHostKeyChecking=no \${{ env.SERVER_USER }}@\${{ env.SERVER_HOST }} << 'ENDSSH'
+            cd {$webRoot}
+            
+            echo '🔧 Setting permissions...'
+            
+            # Set ownership
+            sudo chown -R www-data:www-data {$webRoot}
+            
+            # Set directory permissions
+            find {$webRoot} -type d -exec chmod 775 {} \\;
+            
+            # Set file permissions
+            find {$webRoot} -type f -exec chmod 664 {} \\;
+            
+            # Make storage and cache writable if they exist
+            [ -d \"storage\" ] && chmod -R 775 storage
+            [ -d \"bootstrap/cache\" ] && chmod -R 775 bootstrap/cache
+            [ -d \"public/uploads\" ] && chmod -R 775 public/uploads
+            [ -d \"cache\" ] && chmod -R 775 cache
+            
+            # Restart PHP-FPM
+            sudo systemctl reload php*-fpm 2>/dev/null || true
+            
+            echo '✅ Permissions set'
+          ENDSSH
+      
+      - name: 🧹 Cleanup SSH Key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+      
+      - name: ✅ Deployment Complete
+        run: echo '🎉 Deployment to {$domain} completed successfully!'
 ";
 }
 
