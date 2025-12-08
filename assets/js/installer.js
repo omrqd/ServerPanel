@@ -227,6 +227,25 @@ function getSecurityContent() {
                         <li>⚡ SYN flood protection</li>
                     </ul>
                 </div>
+                
+                <!-- SSH Key Generation -->
+                <div class="p-4 bg-purple-500/10 border border-purple-500/20 rounded-xl">
+                    <h3 class="font-semibold mb-2 text-purple-300">🔑 SSH Key Authentication (Recommended)</h3>
+                    <p class="text-sm text-gray-400 mb-3">Generate a secure SSH key for password-less login:</p>
+                    <button class="btn-secondary w-full mb-3" onclick="generateSSHKey()">
+                        <span id="ssh-key-btn-text">🔐 Generate SSH Key Pair</span>
+                    </button>
+                    <div id="ssh-key-section" class="hidden">
+                        <div class="p-3 bg-red-500/20 border border-red-500/30 rounded-lg mb-3">
+                            <p class="text-xs text-red-300 font-semibold">⚠️ SAVE THIS KEY NOW! It won't be shown again.</p>
+                        </div>
+                        <div class="bg-black/40 rounded-lg p-3 font-mono text-xs max-h-32 overflow-y-auto mb-3 break-all" id="private-key-display"></div>
+                        <div class="flex gap-2">
+                            <button class="btn-secondary flex-1" onclick="downloadSSHKey()">💾 Download Key</button>
+                            <button class="btn-secondary flex-1" onclick="copySSHKey()">📋 Copy Key</button>
+                        </div>
+                    </div>
+                </div>
             </div>
             
             <div class="mt-6">
@@ -1063,4 +1082,77 @@ function copyToClipboard(text) {
     navigator.clipboard.writeText(text).then(() => {
         showToast('Copied to clipboard!', 'success');
     });
+}
+
+// SSH Key Generation
+let generatedSSHKey = null;
+
+async function generateSSHKey() {
+    const btnText = document.getElementById('ssh-key-btn-text');
+    btnText.innerHTML = '<span class="spinner"></span> Generating...';
+
+    try {
+        const response = await fetch(CONFIG.apiEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'generate-ssh-key',
+                config: {
+                    keyName: 'server-panel-key',
+                    keyComment: `ServerPanel-${state.config.domain || 'key'}`
+                }
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            generatedSSHKey = result.privateKey;
+
+            // Show the key section
+            document.getElementById('ssh-key-section').classList.remove('hidden');
+            document.getElementById('private-key-display').textContent = result.privateKey;
+
+            btnText.textContent = '✓ Key Generated';
+            showToast('SSH key generated! SAVE IT NOW!', 'success');
+
+            // Store for later
+            state.sshKeyGenerated = true;
+        } else {
+            btnText.textContent = '❌ Failed - Retry';
+            showToast('SSH key generation failed: ' + result.message, 'error');
+        }
+    } catch (error) {
+        btnText.textContent = '❌ Failed - Retry';
+        showToast('Error: ' + error.message, 'error');
+    }
+}
+
+function downloadSSHKey() {
+    if (!generatedSSHKey) {
+        showToast('No SSH key to download', 'error');
+        return;
+    }
+
+    const blob = new Blob([generatedSSHKey], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'server-panel-key';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    showToast('Key downloaded! Keep it safe!', 'success');
+}
+
+function copySSHKey() {
+    if (!generatedSSHKey) {
+        showToast('No SSH key to copy', 'error');
+        return;
+    }
+
+    copyToClipboard(generatedSSHKey);
+    showToast('SSH key copied! Save it in a secure location!', 'success');
 }
