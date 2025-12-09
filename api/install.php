@@ -1523,14 +1523,23 @@ function handleFinalize($config)
     if (empty($deployExists)) {
         $output[] = "Deploy user not found - creating now...";
 
-        // Create user
-        run_command("useradd -m -s /bin/bash {$deployUser} 2>&1");
+        // Method 1: useradd with full path
+        shell_exec("/usr/sbin/useradd -m -s /bin/bash {$deployUser} 2>&1");
+        $deployExists = trim(shell_exec("id -u {$deployUser} 2>/dev/null"));
 
-        // If useradd fails, try adduser
-        $deployExists = trim(run_command("id -u {$deployUser} 2>/dev/null"));
         if (empty($deployExists)) {
-            run_command("adduser --disabled-password --gecos '' {$deployUser} 2>&1");
-            $deployExists = trim(run_command("id -u {$deployUser} 2>/dev/null"));
+            // Method 2: adduser with full path
+            $output[] = "useradd failed, trying adduser...";
+            shell_exec("/usr/sbin/adduser --disabled-password --gecos '' {$deployUser} 2>&1");
+            $deployExists = trim(shell_exec("id -u {$deployUser} 2>/dev/null"));
+        }
+
+        if (empty($deployExists)) {
+            // Method 3: system() call
+            $output[] = "adduser failed, trying system()...";
+            system("useradd -m -s /bin/bash {$deployUser} 2>&1", $retval);
+            $output[] = "system() returned: {$retval}";
+            $deployExists = trim(shell_exec("id -u {$deployUser} 2>/dev/null"));
         }
 
         if (!empty($deployExists)) {
