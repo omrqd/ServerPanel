@@ -1208,7 +1208,7 @@ jobs:
       - name: 📤 Deploy Files to Server
         run: |
           # Sync all files to server (fresh deployment)
-          rsync -avz --delete \\
+          rsync -avz --delete --no-times --no-perms \\
             -e \"ssh -i ~/.ssh/deploy_key -p \${{ env.SERVER_PORT }} -o StrictHostKeyChecking=no\" \\
             --exclude '.git' \\
             --exclude '.github' \\
