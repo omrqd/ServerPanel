@@ -1292,7 +1292,20 @@ jobs:
             
             # Clear OPcache and restart PHP-FPM (for instant updates)
             echo '🔄 Clearing PHP cache...'
-            sudo systemctl restart php*-fpm 2>/dev/null || sudo service php*-fpm restart 2>/dev/null || true
+            
+            # Find and restart the actual PHP-FPM service
+            PHP_FPM_SERVICE=\$(systemctl list-units --type=service --state=running | grep -oP 'php[0-9.]+-fpm\\.service' | head -1)
+            if [ -n \"\$PHP_FPM_SERVICE\" ]; then
+                sudo systemctl restart \"\$PHP_FPM_SERVICE\"
+                echo \"Restarted \$PHP_FPM_SERVICE\"
+            else
+                # Fallback: try common versions
+                sudo systemctl restart php8.3-fpm 2>/dev/null || \\
+                sudo systemctl restart php8.2-fpm 2>/dev/null || \\
+                sudo systemctl restart php8.1-fpm 2>/dev/null || \\
+                sudo systemctl restart php-fpm 2>/dev/null || \\
+                echo 'Warning: Could not restart PHP-FPM'
+            fi
             
             echo '✅ Permissions set and cache cleared'
           ENDSSH
