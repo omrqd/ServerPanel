@@ -1058,33 +1058,40 @@ function installGitHub($config)
     if (empty($userExists)) {
         $output[] = "Creating deploy user '{$deployUser}'...";
 
-        // Check if home directory already exists (from previous failed attempt)
-        $homeExists = is_dir("/home/{$deployUser}");
+        // Method 1: Try useradd (most common)
+        $createResult = run_command("useradd -m -s /bin/bash {$deployUser} 2>&1");
+        $output[] = "useradd result: " . ($createResult ?: 'no output');
 
-        if ($homeExists) {
-            // Directory exists, create user without -m flag and set home manually
-            run_command("useradd -d /home/{$deployUser} -s /bin/bash {$deployUser}");
-        } else {
-            // Normal case: create user with home directory
-            run_command("useradd -m -s /bin/bash {$deployUser}");
-        }
-
-        run_command("usermod -aG www-data {$deployUser}");
-
-        // Verify user was created
+        // Check if it worked
         $verifyUser = trim(run_command("id -u {$deployUser} 2>/dev/null"));
+
         if (empty($verifyUser)) {
-            $output[] = "⚠️ Warning: Failed to create deploy user, trying alternative method...";
-            run_command("adduser --disabled-password --gecos '' --home /home/{$deployUser} {$deployUser} 2>/dev/null || true");
-            run_command("usermod -aG www-data {$deployUser}");
+            // Method 2: Try adduser (Debian/Ubuntu)
+            $output[] = "useradd failed, trying adduser...";
+            $createResult = run_command("adduser --disabled-password --gecos '' {$deployUser} 2>&1");
+            $output[] = "adduser result: " . ($createResult ?: 'no output');
+            $verifyUser = trim(run_command("id -u {$deployUser} 2>/dev/null"));
         }
 
-        // FIX: Ensure home directory is owned by deploy user
-        run_command("chown -R {$deployUser}:{$deployUser} /home/{$deployUser}");
+        if (empty($verifyUser)) {
+            // Method 3: Direct manipulation (last resort)
+            $output[] = "adduser failed, trying direct method...";
+            run_command("echo '{$deployUser}:x:1001:1001:Deploy User:/home/{$deployUser}:/bin/bash' >> /etc/passwd");
+            run_command("echo '{$deployUser}:x:1001:' >> /etc/group");
+            run_command("mkdir -p /home/{$deployUser}");
+            $verifyUser = trim(run_command("id -u {$deployUser} 2>/dev/null"));
+        }
 
-        $output[] = "Deploy user '{$deployUser}' created";
+        if (!empty($verifyUser)) {
+            run_command("usermod -aG www-data {$deployUser}");
+            // Ensure home directory is owned by deploy user
+            run_command("chown -R {$deployUser}:{$deployUser} /home/{$deployUser}");
+            $output[] = "Deploy user '{$deployUser}' created successfully (uid: {$verifyUser})";
+        } else {
+            $output[] = "⚠️ CRITICAL: All user creation methods failed!";
+        }
     } else {
-        $output[] = "Deploy user '{$deployUser}' already exists";
+        $output[] = "Deploy user '{$deployUser}' already exists (uid: {$userExists})";
     }
 
     // Final verification - abort if user wasn't created
