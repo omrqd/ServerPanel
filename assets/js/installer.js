@@ -675,8 +675,8 @@ function getGitHubContent() {
                     <h3 class="font-semibold mb-2 text-orange-300">🔐 Step 2: Add Secret</h3>
                     <p class="text-xs text-gray-400 mb-2">GitHub → Repo → Settings → Secrets → Actions → New secret</p>
                     <p class="text-xs text-gray-400 mb-2">Name: <code class="bg-black/30 px-1 rounded">DEPLOY_SSH_KEY</code></p>
-                    <div class="bg-black/30 rounded-lg p-3 font-mono text-xs break-all max-h-24 overflow-y-auto" id="private-key-display">
-                        ${state.githubData.sshPrivateKey || 'Private key will appear after setup'}
+                    <div class="bg-black/30 rounded-lg p-3 font-mono text-xs break-all max-h-24 overflow-y-auto whitespace-pre-wrap" id="private-key-display">
+                        <pre>${state.githubData.sshPrivateKey || 'Private key will appear after setup'}</pre>
                     </div>
                     <button class="btn-secondary mt-3" onclick="copyToClipboard(state.githubData.sshPrivateKey)">
                         📋 Copy Private Key (for Secret)
