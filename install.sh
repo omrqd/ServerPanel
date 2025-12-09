@@ -224,84 +224,63 @@ setup_installer_directory() {
 start_web_installer() {
     log_step "Starting secure web installer with HTTPS..."
     
-    # Install nginx if not present
-    if ! command -v nginx &> /dev/null; then
-        log_info "Installing nginx for secure installer..."
-        apt-get install -y nginx > /dev/null 2>&1
-    fi
-    
-    # Stop nginx and any existing PHP server
-    systemctl stop nginx 2>/dev/null || true
+    # Kill any existing servers
     pkill -f "php -S" 2>/dev/null || true
+    pkill -f stunnel 2>/dev/null || true
     sleep 1
     
-    # Generate self-signed SSL certificate for installer
+    # Install stunnel for SSL wrapping
+    log_info "Installing SSL wrapper..."
+    apt-get install -y stunnel4 > /dev/null 2>&1
+    
+    # Generate self-signed SSL certificate
     log_info "Generating temporary SSL certificate..."
     SSL_DIR="/tmp/server-panel-ssl"
     mkdir -p "$SSL_DIR"
     
     openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
-        -keyout "$SSL_DIR/installer.key" \
-        -out "$SSL_DIR/installer.crt" \
+        -keyout "$SSL_DIR/installer.pem" \
+        -out "$SSL_DIR/installer.pem" \
         -subj "/C=US/ST=State/L=City/O=ServerPanel/CN=$SERVER_IP" \
         2>/dev/null
     
-    chmod 600 "$SSL_DIR/installer.key"
+    chmod 600 "$SSL_DIR/installer.pem"
     
-    # Start PHP-FPM if available, otherwise use built-in server
-    PHP_VER=$(php -v | head -n 1 | cut -d " " -f 2 | cut -d "." -f 1,2)
+    # Start PHP built-in server on internal port (runs as root!)
+    INTERNAL_PORT=8081
+    cd "$INSTALLER_DIR"
+    nohup php -S 127.0.0.1:$INTERNAL_PORT -t "$INSTALLER_DIR" > /tmp/server-panel.log 2>&1 &
+    sleep 2
     
-    # Create nginx config for installer
-    log_info "Configuring nginx for HTTPS installer..."
-    cat > /etc/nginx/sites-available/server-panel-installer << NGINX_EOF
-server {
-    listen $INSTALLER_PORT ssl http2;
-    listen [::]:$INSTALLER_PORT ssl http2;
+    # Create stunnel config to wrap PHP server with SSL
+    log_info "Configuring HTTPS proxy..."
+    cat > /etc/stunnel/server-panel.conf << STUNNEL_EOF
+pid = /tmp/stunnel-server-panel.pid
+[server-panel]
+accept = 0.0.0.0:$INSTALLER_PORT
+connect = 127.0.0.1:$INTERNAL_PORT
+cert = $SSL_DIR/installer.pem
+STUNNEL_EOF
     
-    ssl_certificate $SSL_DIR/installer.crt;
-    ssl_certificate_key $SSL_DIR/installer.key;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    
-    root $INSTALLER_DIR;
-    index index.php index.html;
-    
-    location / {
-        try_files \$uri \$uri/ /index.php?\$query_string;
-    }
-    
-    location ~ \.php\$ {
-        include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/run/php/php${PHP_VER}-fpm.sock;
-        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
-        include fastcgi_params;
-    }
-}
-NGINX_EOF
-    
-    # Enable the installer site
-    rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-    ln -sf /etc/nginx/sites-available/server-panel-installer /etc/nginx/sites-enabled/
-    
-    # Ensure PHP-FPM is running
-    systemctl restart php${PHP_VER}-fpm 2>/dev/null || systemctl restart php*-fpm 2>/dev/null || true
-    
-    # Test and start nginx
-    nginx -t 2>/dev/null
-    systemctl start nginx
+    # Start stunnel
+    stunnel /etc/stunnel/server-panel.conf
     
     # Allow port through firewall if UFW is enabled
     ufw allow $INSTALLER_PORT/tcp 2>/dev/null || true
     
-    # Verify nginx is running
+    # Verify servers are running
     sleep 2
-    if systemctl is-active --quiet nginx; then
+    if pgrep -f "php -S" > /dev/null && pgrep -f stunnel > /dev/null; then
         log_success "Secure web installer started with HTTPS"
     else
-        log_warning "Nginx failed, falling back to PHP server..."
-        cd "$INSTALLER_DIR"
+        log_warning "SSL wrapper failed, using HTTP fallback..."
+        pkill -f stunnel 2>/dev/null || true
+        pkill -f "php -S" 2>/dev/null || true
         nohup php -S 0.0.0.0:$INSTALLER_PORT -t "$INSTALLER_DIR" > /tmp/server-panel.log 2>&1 &
         sleep 2
-        log_info "Using HTTP fallback (browser may show warning)"
+        # Update for HTTP fallback
+        echo ""
+        echo -e "${YELLOW}⚠️  Using HTTP - use http://${SERVER_IP}:${INSTALLER_PORT} instead${NC}"
     fi
 }
 
