@@ -772,14 +772,15 @@ function getCompleteContent() {
                 <!-- Cloudflare Origin Certificate (for Full Strict) -->
                 <div id="cloudflare-cert-section" class="mt-4 ${state.config.sslMode === 'cloudflare' ? '' : 'hidden'}">
                     <div class="p-4 bg-orange-500/10 border border-orange-500/20 rounded-lg mb-4">
-                        <h4 class="font-medium text-orange-300 mb-2">📋 How to get Cloudflare Origin Certificate:</h4>
+                        <h4 class="font-medium text-orange-300 mb-2">📋 How to get Cloudflare Origin Server Certificate:</h4>
                         <ol class="text-xs text-gray-400 space-y-1 list-decimal list-inside">
-                            <li>Go to Cloudflare Dashboard → Your Domain → SSL/TLS → Origin Server</li>
-                            <li>Click "Create Certificate"</li>
-                            <li>Choose "Generate private key and CSR with Cloudflare"</li>
-                            <li>Set validity (15 years recommended)</li>
-                            <li>Click "Create" and copy both the certificate and key below</li>
+                            <li>Go to Cloudflare Dashboard → Your Domain → <strong>SSL/TLS → Origin Server</strong></li>
+                            <li>Click <strong>"Create Certificate"</strong> (NOT Client Certificate!)</li>
+                            <li>Hostnames: ensure <strong>${state.config.domain || 'yourdomain.com'}</strong> and <strong>*.${state.config.domain || 'yourdomain.com'}</strong> are listed</li>
+                            <li>Key type: RSA (2048) | Validity: 15 years</li>
+                            <li>Click "Create" and <strong>copy BOTH</strong> certificate and private key below</li>
                         </ol>
+                        <p class="text-xs text-red-400 mt-2">⚠️ Do NOT use "Client Certificates" - those won't work!</p>
                     </div>
                     
                     <div class="space-y-4">

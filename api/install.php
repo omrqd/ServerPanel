@@ -696,6 +696,15 @@ function installNginx($config)
     $output = [];
     $domain = $config['domain'] ?? 'localhost';
 
+    // Stop and disable Apache if it's running (common on some VPS)
+    $apacheStatus = trim(run_command('systemctl is-active apache2 2>/dev/null'));
+    if ($apacheStatus === 'active') {
+        $output[] = 'Stopping Apache2 (conflicts with Nginx)...';
+        run_command('systemctl stop apache2');
+        run_command('systemctl disable apache2');
+        $output[] = 'Apache2 stopped and disabled';
+    }
+
     $output[] = 'Installing Nginx...';
     run_command('apt-get install -y nginx');
 
