@@ -1049,6 +1049,7 @@ function installGitHub($config)
     $branch = $config['githubBranch'] ?? 'main';
     $deployUser = 'deploy';
     $webRoot = "/var/www/{$domain}";
+    $entryPoint = $config['entryPoint'] ?? 'public'; // 'public' or 'root'
 
     $output[] = 'Setting up GitHub deployment...';
 
@@ -1058,6 +1059,9 @@ function installGitHub($config)
         $output[] = "Creating deploy user '{$deployUser}'...";
         run_command("useradd -m -s /bin/bash {$deployUser}");
         run_command("usermod -aG www-data {$deployUser}");
+        $output[] = "Deploy user '{$deployUser}' created";
+    } else {
+        $output[] = "Deploy user '{$deployUser}' already exists";
     }
 
     // Create .ssh directory
@@ -1072,9 +1076,10 @@ function installGitHub($config)
         run_command("ssh-keygen -t ed25519 -f {$keyPath} -N '' -C 'github-actions-deploy'");
     }
 
-    // Read the public key
+    // Read the keys
     $publicKey = trim(file_get_contents("{$keyPath}.pub"));
-    $output[] = 'SSH key generated successfully';
+    $privateKey = file_get_contents($keyPath);
+    $output[] = 'SSH key pair generated';
 
     // Set proper ownership
     run_command("chown -R {$deployUser}:{$deployUser} {$sshDir}");
@@ -1089,6 +1094,15 @@ function installGitHub($config)
         run_command("chown {$deployUser}:{$deployUser} {$authorizedKeys}");
     }
 
+    // Create sudoers file for passwordless commands
+    $output[] = 'Setting up passwordless sudo for deploy user...';
+    $sudoersContent = "# Deploy user permissions for GitHub Actions
+{$deployUser} ALL=(ALL) NOPASSWD: /usr/bin/chown, /usr/bin/chmod, /usr/bin/find, /usr/bin/systemctl, /usr/sbin/service
+";
+    file_put_contents("/etc/sudoers.d/{$deployUser}", $sudoersContent);
+    run_command("chmod 440 /etc/sudoers.d/{$deployUser}");
+    $output[] = 'Passwordless sudo configured';
+
     // Give deploy user access to web root
     run_command("chown -R {$deployUser}:www-data {$webRoot}");
     run_command("chmod -R 775 {$webRoot}");
@@ -1098,32 +1112,38 @@ function installGitHub($config)
     $sshPort = $config['sshPort'] ?? 22;
 
     // Generate GitHub Actions workflow YAML
-    $workflowYaml = generateGitHubWorkflow($domain, $branch, $deployUser, $serverIp, $sshPort, $webRoot);
+    $workflowYaml = generateGitHubWorkflow($domain, $branch, $deployUser, $serverIp, $sshPort, $webRoot, $entryPoint);
 
-    $output[] = 'Deploy user configured with web root access';
-    $output[] = "Web root: {$webRoot}";
     $output[] = '';
-    $output[] = '📋 Next steps:';
-    $output[] = '1. Copy the SSH public key below';
-    $output[] = '2. Add it to GitHub: Repo → Settings → Deploy Keys';
-    $output[] = '3. Add the private key as a GitHub Secret named DEPLOY_SSH_KEY';
-    $output[] = '4. Create .github/workflows/deploy.yml with the workflow below';
+    $output[] = '✅ Server-side setup complete!';
+    $output[] = '';
+    $output[] = '📋 Now do these steps in GitHub:';
+    $output[] = '1. Add Deploy Key: Repo → Settings → Deploy Keys → Add key';
+    $output[] = '2. Add Secret: Repo → Settings → Secrets → Actions → New secret';
+    $output[] = '   Name: DEPLOY_SSH_KEY';
+    $output[] = '   Value: (copy the private key shown below)';
+    $output[] = '3. Create workflow file: .github/workflows/deploy.yml';
 
     return [
         'success' => true,
         'message' => 'GitHub deployment configured',
         'output' => $output,
         'sshPublicKey' => $publicKey,
+        'sshPrivateKey' => $privateKey,
         'workflowYaml' => $workflowYaml,
-        'privateKeyPath' => $keyPath
+        'serverIp' => $serverIp,
+        'sshPort' => $sshPort
     ];
 }
 
 /**
  * Generate GitHub Actions workflow YAML
  */
-function generateGitHubWorkflow($domain, $branch, $deployUser, $serverIp, $sshPort, $webRoot)
+function generateGitHubWorkflow($domain, $branch, $deployUser, $serverIp, $sshPort, $webRoot, $entryPoint = 'public')
 {
+    // Determine the Nginx root path based on entry point
+    $nginxRoot = $entryPoint === 'public' ? "{$webRoot}/public" : $webRoot;
+
     return "name: 🚀 Deploy to Production
 
 on:
@@ -1214,7 +1234,7 @@ jobs:
             echo '✅ Dependencies installed'
           ENDSSH
       
-      - name: 🔧 Set Permissions
+      - name: 🔧 Set Permissions & Clear Cache
         run: |
           ssh -i ~/.ssh/deploy_key -p \${{ env.SERVER_PORT }} -o StrictHostKeyChecking=no \${{ env.SERVER_USER }}@\${{ env.SERVER_HOST }} << 'ENDSSH'
             cd {$webRoot}
@@ -1225,21 +1245,22 @@ jobs:
             sudo chown -R www-data:www-data {$webRoot}
             
             # Set directory permissions
-            find {$webRoot} -type d -exec chmod 775 {} \\;
+            sudo find {$webRoot} -type d -exec chmod 775 {} \\;
             
             # Set file permissions
-            find {$webRoot} -type f -exec chmod 664 {} \\;
+            sudo find {$webRoot} -type f -exec chmod 664 {} \\;
             
             # Make storage and cache writable if they exist
-            [ -d \"storage\" ] && chmod -R 775 storage
-            [ -d \"bootstrap/cache\" ] && chmod -R 775 bootstrap/cache
-            [ -d \"public/uploads\" ] && chmod -R 775 public/uploads
-            [ -d \"cache\" ] && chmod -R 775 cache
+            [ -d \"storage\" ] && sudo chmod -R 775 storage
+            [ -d \"bootstrap/cache\" ] && sudo chmod -R 775 bootstrap/cache
+            [ -d \"public/uploads\" ] && sudo chmod -R 775 public/uploads
+            [ -d \"cache\" ] && sudo chmod -R 775 cache
             
-            # Restart PHP-FPM
-            sudo systemctl reload php*-fpm 2>/dev/null || true
+            # Clear OPcache and restart PHP-FPM (for instant updates)
+            echo '🔄 Clearing PHP cache...'
+            sudo systemctl restart php*-fpm 2>/dev/null || sudo service php*-fpm restart 2>/dev/null || true
             
-            echo '✅ Permissions set'
+            echo '✅ Permissions set and cache cleared'
           ENDSSH
       
       - name: 🧹 Cleanup SSH Key

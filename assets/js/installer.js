@@ -36,12 +36,14 @@ let state = {
         githubBranch: 'main',
         sshAllowPassword: true,
         sshAllowKey: true,
-        sshDisableRootPassword: false
+        sshDisableRootPassword: false,
+        entryPoint: 'public'
     },
     completed: {},
     testResults: {},
     githubData: {
         sshPublicKey: '',
+        sshPrivateKey: '',
         deployUser: 'deploy',
         workflowYaml: ''
     },
@@ -635,24 +637,58 @@ function getGitHubContent() {
                            value="${state.config.githubBranch}">
                 </div>
                 
-                <!-- SSH Key Display -->
+                <!-- Entry Point Selection -->
+                <div class="p-4 bg-white/5 rounded-xl">
+                    <label class="block text-sm font-medium mb-3">Web Entry Point</label>
+                    <div class="space-y-2">
+                        <label class="flex items-center p-2 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10">
+                            <input type="radio" name="entryPoint" value="public" class="mr-3" ${state.config.entryPoint !== 'root' ? 'checked' : ''} onchange="state.config.entryPoint = 'public'">
+                            <div>
+                                <span class="font-medium">📁 /public directory</span>
+                                <p class="text-xs text-gray-500">Laravel, Symfony, modern PHP frameworks</p>
+                            </div>
+                        </label>
+                        <label class="flex items-center p-2 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10">
+                            <input type="radio" name="entryPoint" value="root" class="mr-3" ${state.config.entryPoint === 'root' ? 'checked' : ''} onchange="state.config.entryPoint = 'root'">
+                            <div>
+                                <span class="font-medium">📂 Root directory</span>
+                                <p class="text-xs text-gray-500">Node.js, hybrid apps, custom setups</p>
+                            </div>
+                        </label>
+                    </div>
+                </div>
+                
+                <!-- Deploy Key (Public) -->
                 <div class="p-4 bg-white/5 rounded-xl" id="github-ssh-section" style="display: ${state.githubData.sshPublicKey ? 'block' : 'none'}">
-                    <h3 class="font-semibold mb-3">🔑 Deploy SSH Key</h3>
-                    <p class="text-sm text-gray-400 mb-3">Add this key to your GitHub repository's Deploy Keys:</p>
+                    <h3 class="font-semibold mb-2">🔑 Step 1: Add Deploy Key</h3>
+                    <p class="text-xs text-gray-400 mb-2">GitHub → Repo → Settings → Deploy Keys → Add deploy key</p>
                     <div class="bg-black/30 rounded-lg p-3 font-mono text-xs break-all" id="ssh-key-display">
-                        ${state.githubData.sshPublicKey || 'Key will appear here after setup'}
+                        ${state.githubData.sshPublicKey || 'Key will appear after setup'}
                     </div>
                     <button class="btn-secondary mt-3" onclick="copyToClipboard(state.githubData.sshPublicKey)">
-                        📋 Copy SSH Key
+                        📋 Copy Public Key
+                    </button>
+                </div>
+                
+                <!-- Private Key (for GitHub Secret) -->
+                <div class="p-4 bg-orange-500/10 border border-orange-500/20 rounded-xl" id="github-private-key-section" style="display: ${state.githubData.sshPrivateKey ? 'block' : 'none'}">
+                    <h3 class="font-semibold mb-2 text-orange-300">🔐 Step 2: Add Secret</h3>
+                    <p class="text-xs text-gray-400 mb-2">GitHub → Repo → Settings → Secrets → Actions → New secret</p>
+                    <p class="text-xs text-gray-400 mb-2">Name: <code class="bg-black/30 px-1 rounded">DEPLOY_SSH_KEY</code></p>
+                    <div class="bg-black/30 rounded-lg p-3 font-mono text-xs break-all max-h-24 overflow-y-auto" id="private-key-display">
+                        ${state.githubData.sshPrivateKey || 'Private key will appear after setup'}
+                    </div>
+                    <button class="btn-secondary mt-3" onclick="copyToClipboard(state.githubData.sshPrivateKey)">
+                        📋 Copy Private Key (for Secret)
                     </button>
                 </div>
                 
                 <!-- Workflow YAML -->
                 <div class="p-4 bg-white/5 rounded-xl" id="github-workflow-section" style="display: ${state.githubData.workflowYaml ? 'block' : 'none'}">
-                    <h3 class="font-semibold mb-3">📄 GitHub Actions Workflow</h3>
-                    <p class="text-sm text-gray-400 mb-3">Save this as <code>.github/workflows/deploy.yml</code> in your repo:</p>
+                    <h3 class="font-semibold mb-2">📄 Step 3: Create Workflow File</h3>
+                    <p class="text-xs text-gray-400 mb-2">Save as <code class="bg-black/30 px-1 rounded">.github/workflows/deploy.yml</code></p>
                     <div class="bg-black/30 rounded-lg p-3 font-mono text-xs max-h-48 overflow-y-auto" id="workflow-yaml-display">
-                        <pre>${state.githubData.workflowYaml || 'Workflow will appear here after setup'}</pre>
+                        <pre>${state.githubData.workflowYaml || 'Workflow will appear after setup'}</pre>
                     </div>
                     <button class="btn-secondary mt-3" onclick="copyToClipboard(state.githubData.workflowYaml)">
                         📋 Copy Workflow YAML
@@ -1116,6 +1152,9 @@ async function setupGitHub() {
             // Store the generated data
             if (result.sshPublicKey) {
                 state.githubData.sshPublicKey = result.sshPublicKey;
+            }
+            if (result.sshPrivateKey) {
+                state.githubData.sshPrivateKey = result.sshPrivateKey;
             }
             if (result.workflowYaml) {
                 state.githubData.workflowYaml = result.workflowYaml;
