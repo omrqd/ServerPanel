@@ -222,28 +222,86 @@ setup_installer_directory() {
 }
 
 start_web_installer() {
-    log_step "Starting web installer..."
+    log_step "Starting secure web installer with HTTPS..."
     
-    # Kill any existing PHP server on the port
-    pkill -f "php -S 0.0.0.0:$INSTALLER_PORT" 2>/dev/null || true
+    # Install nginx if not present
+    if ! command -v nginx &> /dev/null; then
+        log_info "Installing nginx for secure installer..."
+        apt-get install -y nginx > /dev/null 2>&1
+    fi
     
-    # Wait a moment
+    # Stop nginx and any existing PHP server
+    systemctl stop nginx 2>/dev/null || true
+    pkill -f "php -S" 2>/dev/null || true
     sleep 1
     
-    # Start PHP built-in server
-    cd "$INSTALLER_DIR"
-    nohup php -S 0.0.0.0:$INSTALLER_PORT -t "$INSTALLER_DIR" > /tmp/server-panel.log 2>&1 &
+    # Generate self-signed SSL certificate for installer
+    log_info "Generating temporary SSL certificate..."
+    SSL_DIR="/tmp/server-panel-ssl"
+    mkdir -p "$SSL_DIR"
     
-    # Wait for server to start
+    openssl req -x509 -nodes -days 1 -newkey rsa:2048 \
+        -keyout "$SSL_DIR/installer.key" \
+        -out "$SSL_DIR/installer.crt" \
+        -subj "/C=US/ST=State/L=City/O=ServerPanel/CN=$SERVER_IP" \
+        2>/dev/null
+    
+    chmod 600 "$SSL_DIR/installer.key"
+    
+    # Start PHP-FPM if available, otherwise use built-in server
+    PHP_VER=$(php -v | head -n 1 | cut -d " " -f 2 | cut -d "." -f 1,2)
+    
+    # Create nginx config for installer
+    log_info "Configuring nginx for HTTPS installer..."
+    cat > /etc/nginx/sites-available/server-panel-installer << NGINX_EOF
+server {
+    listen $INSTALLER_PORT ssl http2;
+    listen [::]:$INSTALLER_PORT ssl http2;
+    
+    ssl_certificate $SSL_DIR/installer.crt;
+    ssl_certificate_key $SSL_DIR/installer.key;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    
+    root $INSTALLER_DIR;
+    index index.php index.html;
+    
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+    
+    location ~ \.php\$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php${PHP_VER}-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME \$document_root\$fastcgi_script_name;
+        include fastcgi_params;
+    }
+}
+NGINX_EOF
+    
+    # Enable the installer site
+    rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+    ln -sf /etc/nginx/sites-available/server-panel-installer /etc/nginx/sites-enabled/
+    
+    # Ensure PHP-FPM is running
+    systemctl restart php${PHP_VER}-fpm 2>/dev/null || systemctl restart php*-fpm 2>/dev/null || true
+    
+    # Test and start nginx
+    nginx -t 2>/dev/null
+    systemctl start nginx
+    
+    # Allow port through firewall if UFW is enabled
+    ufw allow $INSTALLER_PORT/tcp 2>/dev/null || true
+    
+    # Verify nginx is running
     sleep 2
-    
-    # Check if server is running
-    if pgrep -f "php -S 0.0.0.0:$INSTALLER_PORT" > /dev/null; then
-        log_success "Web installer started successfully"
+    if systemctl is-active --quiet nginx; then
+        log_success "Secure web installer started with HTTPS"
     else
-        log_error "Failed to start web installer"
-        cat /tmp/server-panel.log
-        exit 1
+        log_warning "Nginx failed, falling back to PHP server..."
+        cd "$INSTALLER_DIR"
+        nohup php -S 0.0.0.0:$INSTALLER_PORT -t "$INSTALLER_DIR" > /tmp/server-panel.log 2>&1 &
+        sleep 2
+        log_info "Using HTTP fallback (browser may show warning)"
     fi
 }
 
@@ -261,11 +319,14 @@ print_completion_message() {
     echo ""
     echo -e "${YELLOW}  ┌────────────────────────────────────────────────────────┐${NC}"
     echo -e "${YELLOW}  │                                                        │${NC}"
-    echo -e "${YELLOW}  │   ${WHITE}http://${SERVER_IP}:${INSTALLER_PORT}${YELLOW}                             │${NC}"
+    echo -e "${YELLOW}  │   ${WHITE}https://${SERVER_IP}:${INSTALLER_PORT}${YELLOW}                            │${NC}"
     echo -e "${YELLOW}  │                                                        │${NC}"
     echo -e "${YELLOW}  └────────────────────────────────────────────────────────┘${NC}"
     echo ""
     echo -e "${WHITE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+    echo -e "${YELLOW}  ⚠️  Your browser will show a security warning (self-signed cert).${NC}"
+    echo -e "${YELLOW}     Click 'Advanced' → 'Proceed' to continue safely.${NC}"
     echo ""
     echo -e "${PURPLE}  Note: After completing the web setup, all installer files${NC}"
     echo -e "${PURPLE}  will be automatically removed for security.${NC}"
