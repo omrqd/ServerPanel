@@ -16,6 +16,7 @@ const CONFIG = {
         { id: 'redis', title: 'Redis', icon: '⚡' },
         { id: 'github', title: 'GitHub', icon: '🐙' },
         { id: 'testing', title: 'Testing', icon: '✅' },
+        { id: 'deploy', title: 'Deploy User', icon: '👤' },
         { id: 'complete', title: 'Complete', icon: '🎉' }
     ]
 };
@@ -105,6 +106,7 @@ function getStepContent(stepId) {
         redis: getRedisContent(),
         github: getGitHubContent(),
         testing: getTestingContent(),
+        deploy: getDeployContent(),
         complete: getCompleteContent()
     };
     return templates[stepId] || '<p>Unknown step</p>';
@@ -761,6 +763,51 @@ function getTestingContent() {
     `;
 }
 
+// Deploy User Step
+function getDeployContent() {
+    return `
+        <div class="glass-card p-8">
+            <div class="flex items-center gap-4 mb-6">
+                <div class="w-12 h-12 rounded-xl bg-blue-500/20 flex items-center justify-center text-2xl">
+                    👤
+                </div>
+                <div>
+                    <h2 class="text-2xl font-bold">Deploy User Setup</h2>
+                    <p class="text-gray-400">Configure the deploy user for GitHub Actions deployments</p>
+                </div>
+            </div>
+            
+            <div class="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4 mb-6">
+                <h3 class="font-semibold text-blue-400 mb-2">ℹ️ What this does:</h3>
+                <ul class="text-sm text-gray-300 space-y-1">
+                    <li>• Creates a <code class="bg-white/10 px-1 rounded">deploy</code> user for GitHub Actions</li>
+                    <li>• Sets up SSH keys for passwordless deployment</li>
+                    <li>• Configures sudo permissions for deployment tasks</li>
+                    <li>• Sets correct ownership on web directories</li>
+                </ul>
+            </div>
+            
+            <div id="deploy-status" class="p-4 bg-white/5 rounded-xl mb-6">
+                <div class="flex items-center gap-3">
+                    <span class="status-badge pending" id="deploy-user-status">checking...</span>
+                    <span id="deploy-user-message">Checking deploy user status...</span>
+                </div>
+            </div>
+            
+            <div id="deploy-output" class="console-output mb-6 hidden"></div>
+            
+            <div class="flex gap-4">
+                <button class="btn-primary flex-1" onclick="setupDeployUser()">
+                    🔧 Setup Deploy User
+                </button>
+                <button class="btn-secondary" onclick="checkDeployUser()">
+                    🔍 Check Status
+                </button>
+            </div>
+        </div>
+    `;
+}
+
 // Complete Step
 function getCompleteContent() {
     return `
@@ -1180,6 +1227,96 @@ async function setupGitHub() {
         output.innerHTML += `<div class="console-line error">Error: ${error.message}</div>`;
         btnText.textContent = 'Retry Setup';
         showToast('GitHub setup failed', 'error');
+    }
+}
+
+// Check deploy user status
+async function checkDeployUser() {
+    const statusBadge = document.getElementById('deploy-user-status');
+    const statusMessage = document.getElementById('deploy-user-message');
+    const output = document.getElementById('deploy-output');
+
+    statusBadge.textContent = 'checking...';
+    statusBadge.className = 'status-badge pending';
+
+    try {
+        const response = await fetch(CONFIG.apiEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'check-deploy-user',
+                config: state.config
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.exists) {
+            statusBadge.textContent = 'ready';
+            statusBadge.className = 'status-badge passed';
+            statusMessage.textContent = `Deploy user 'deploy' exists (uid: ${result.uid})`;
+            state.completed.deploy = true;
+        } else {
+            statusBadge.textContent = 'not found';
+            statusBadge.className = 'status-badge failed';
+            statusMessage.textContent = "Deploy user not found - click 'Setup Deploy User' to create";
+        }
+    } catch (error) {
+        statusBadge.textContent = 'error';
+        statusBadge.className = 'status-badge failed';
+        statusMessage.textContent = 'Error checking deploy user';
+    }
+}
+
+// Setup deploy user
+async function setupDeployUser() {
+    const statusBadge = document.getElementById('deploy-user-status');
+    const statusMessage = document.getElementById('deploy-user-message');
+    const output = document.getElementById('deploy-output');
+
+    statusBadge.textContent = 'setting up...';
+    statusBadge.className = 'status-badge pending';
+    output.classList.remove('hidden');
+    output.innerHTML = '<div class="console-line info">Creating deploy user...</div>';
+
+    try {
+        const response = await fetch(CONFIG.apiEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                action: 'setup-deploy-user',
+                config: state.config
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            // Show output
+            if (result.output) {
+                result.output.forEach(line => {
+                    output.innerHTML += `<div class="console-line">${line}</div>`;
+                });
+            }
+
+            statusBadge.textContent = 'ready';
+            statusBadge.className = 'status-badge passed';
+            statusMessage.textContent = result.message;
+            state.completed.deploy = true;
+            showToast('Deploy user created successfully!', 'success');
+        } else {
+            output.innerHTML += `<div class="console-line error">✗ ${result.message}</div>`;
+            statusBadge.textContent = 'failed';
+            statusBadge.className = 'status-badge failed';
+            statusMessage.textContent = result.message;
+            showToast('Failed to create deploy user', 'error');
+        }
+    } catch (error) {
+        output.innerHTML += `<div class="console-line error">✗ ${error.message}</div>`;
+        statusBadge.textContent = 'error';
+        statusBadge.className = 'status-badge failed';
+        statusMessage.textContent = 'Error creating deploy user';
+        showToast('Error setting up deploy user', 'error');
     }
 }
 

@@ -37,6 +37,12 @@ try {
         case 'finalize':
             $result = handleFinalize($config);
             break;
+        case 'check-deploy-user':
+            $result = handleCheckDeployUser($config);
+            break;
+        case 'setup-deploy-user':
+            $result = handleSetupDeployUser($config);
+            break;
         default:
             $result = ['success' => false, 'message' => 'Unknown action'];
     }
@@ -101,6 +107,118 @@ function handleGetSystemInfo()
             'ip' => $publicIp
         ],
         'recommendations' => $recommendations
+    ];
+}
+
+/**
+ * Check if deploy user exists
+ */
+function handleCheckDeployUser($config)
+{
+    $deployUser = 'deploy';
+    $uid = trim(shell_exec("id -u {$deployUser} 2>/dev/null"));
+
+    if (!empty($uid)) {
+        return [
+            'exists' => true,
+            'uid' => $uid,
+            'message' => "Deploy user '{$deployUser}' exists"
+        ];
+    }
+
+    return [
+        'exists' => false,
+        'uid' => null,
+        'message' => "Deploy user '{$deployUser}' not found"
+    ];
+}
+
+/**
+ * Setup deploy user with all required permissions
+ */
+function handleSetupDeployUser($config)
+{
+    $output = [];
+    $deployUser = 'deploy';
+    $domain = $config['domain'] ?? '';
+    $webRoot = "/var/www/{$domain}";
+
+    $output[] = "Setting up deploy user '{$deployUser}'...";
+
+    // Check if user already exists
+    $uid = trim(shell_exec("id -u {$deployUser} 2>/dev/null"));
+
+    if (!empty($uid)) {
+        $output[] = "Deploy user already exists (uid: {$uid})";
+    } else {
+        // Method 1: useradd with full path
+        $output[] = "Creating deploy user...";
+        shell_exec("/usr/sbin/useradd -m -s /bin/bash {$deployUser} 2>&1");
+        $uid = trim(shell_exec("id -u {$deployUser} 2>/dev/null"));
+
+        if (empty($uid)) {
+            // Method 2: adduser
+            $output[] = "useradd failed, trying adduser...";
+            shell_exec("/usr/sbin/adduser --disabled-password --gecos '' {$deployUser} 2>&1");
+            $uid = trim(shell_exec("id -u {$deployUser} 2>/dev/null"));
+        }
+
+        if (empty($uid)) {
+            // Method 3: system call
+            $output[] = "adduser failed, trying system()...";
+            system("useradd -m -s /bin/bash {$deployUser} 2>&1", $retval);
+            $uid = trim(shell_exec("id -u {$deployUser} 2>/dev/null"));
+        }
+
+        if (empty($uid)) {
+            return [
+                'success' => false,
+                'message' => 'Failed to create deploy user - please create manually: useradd -m -s /bin/bash deploy',
+                'output' => $output
+            ];
+        }
+
+        $output[] = "Deploy user created (uid: {$uid})";
+    }
+
+    // Add to www-data group
+    shell_exec("/usr/sbin/usermod -aG www-data {$deployUser} 2>&1");
+    $output[] = "Added deploy user to www-data group";
+
+    // Setup home directory ownership
+    shell_exec("chown -R {$deployUser}:{$deployUser} /home/{$deployUser} 2>&1");
+    $output[] = "Set home directory ownership";
+
+    // Setup SSH directory if keys exist
+    $sshDir = "/home/{$deployUser}/.ssh";
+    if (is_dir($sshDir)) {
+        shell_exec("chown -R {$deployUser}:{$deployUser} {$sshDir}");
+        shell_exec("chmod 700 {$sshDir}");
+        shell_exec("chmod 600 {$sshDir}/authorized_keys 2>/dev/null");
+        shell_exec("chmod 600 {$sshDir}/github_deploy 2>/dev/null");
+        $output[] = "Configured SSH directory permissions";
+    }
+
+    // Setup sudoers
+    $sudoersContent = "{$deployUser} ALL=(ALL) NOPASSWD: /usr/bin/chown, /usr/bin/chmod, /usr/bin/find, /usr/bin/systemctl, /usr/sbin/service\n";
+    file_put_contents("/etc/sudoers.d/{$deployUser}", $sudoersContent);
+    shell_exec("chmod 440 /etc/sudoers.d/{$deployUser}");
+    $output[] = "Configured sudo permissions";
+
+    // Setup web directory ownership
+    if (!empty($domain) && is_dir($webRoot)) {
+        shell_exec("chown -R {$deployUser}:www-data {$webRoot}");
+        shell_exec("chmod -R 775 {$webRoot}");
+        $output[] = "Set web directory ownership for {$domain}";
+    }
+
+    $output[] = "✅ Deploy user setup complete!";
+
+    return [
+        'success' => true,
+        'message' => "Deploy user '{$deployUser}' configured successfully",
+        'output' => $output,
+        'uid' => $uid
     ];
 }
 
