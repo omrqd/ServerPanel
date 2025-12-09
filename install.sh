@@ -224,10 +224,12 @@ setup_installer_directory() {
 start_web_installer() {
     log_step "Starting secure web installer with HTTPS..."
     
-    # Kill any existing servers
+    # Kill any existing servers and free up port 8080
+    systemctl stop nginx 2>/dev/null || true
     pkill -f "php -S" 2>/dev/null || true
     pkill -f stunnel 2>/dev/null || true
-    sleep 1
+    fuser -k $INSTALLER_PORT/tcp 2>/dev/null || true
+    sleep 2
     
     # Install stunnel for SSL wrapping
     log_info "Installing SSL wrapper..."
