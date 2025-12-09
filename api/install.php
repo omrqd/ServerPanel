@@ -1506,8 +1506,27 @@ function handleFinalize($config)
     $rmCommands = implode("\n", array_map(fn($d) => "rm -rf \"{$d}\"", $dirsToRemove));
     $cleanupScript = "#!/bin/bash
 sleep 3
+
+# Stop installer services
+pkill -f stunnel 2>/dev/null || true
+pkill -f 'php -S' 2>/dev/null || true
+fuser -k 8080/tcp 2>/dev/null || true
+fuser -k 8081/tcp 2>/dev/null || true
+
+# Remove installer nginx config
+rm -f /etc/nginx/sites-enabled/server-panel-installer 2>/dev/null || true
+rm -f /etc/nginx/sites-available/server-panel-installer 2>/dev/null || true
+rm -f /etc/stunnel/server-panel.conf 2>/dev/null || true
+
+# Remove temporary SSL certificates
+rm -rf /tmp/server-panel-ssl 2>/dev/null || true
+
+# Remove installer directories
 {$rmCommands}
-pkill -f 'php -S 0.0.0.0:8080' 2>/dev/null || true
+
+# Start nginx for production
+systemctl restart nginx 2>/dev/null || true
+
 rm -- \"\$0\"
 ";
     file_put_contents('/tmp/cleanup-installer.sh', $cleanupScript);
