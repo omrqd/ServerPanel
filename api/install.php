@@ -1304,17 +1304,24 @@ jobs:
             PHP_FPM_SERVICE=\$(systemctl list-units --type=service --state=running | grep -oP 'php[0-9.]+-fpm\\.service' | head -1)
             if [ -n \"\$PHP_FPM_SERVICE\" ]; then
                 sudo systemctl restart \"\$PHP_FPM_SERVICE\"
-                echo \"Restarted \$PHP_FPM_SERVICE\"
+                echo \"✓ Restarted \$PHP_FPM_SERVICE\"
             else
                 # Fallback: try common versions
-                sudo systemctl restart php8.3-fpm 2>/dev/null || \\
-                sudo systemctl restart php8.2-fpm 2>/dev/null || \\
-                sudo systemctl restart php8.1-fpm 2>/dev/null || \\
-                sudo systemctl restart php-fpm 2>/dev/null || \\
-                echo 'Warning: Could not restart PHP-FPM'
+                sudo systemctl restart php8.3-fpm 2>/dev/null && echo '✓ Restarted php8.3-fpm' || \\
+                sudo systemctl restart php8.2-fpm 2>/dev/null && echo '✓ Restarted php8.2-fpm' || \\
+                sudo systemctl restart php8.1-fpm 2>/dev/null && echo '✓ Restarted php8.1-fpm' || \\
+                echo '⚠️ Warning: Could not restart PHP-FPM'
             fi
             
-            echo '✅ Permissions set and cache cleared'
+            # Also reload nginx to clear any proxy cache
+            sudo systemctl reload nginx 2>/dev/null && echo '✓ Reloaded Nginx' || true
+            
+            # Clear any application-level caches
+            [ -d \"storage/framework/cache\" ] && rm -rf storage/framework/cache/* 2>/dev/null && echo '✓ Cleared Laravel cache'
+            [ -d \"bootstrap/cache\" ] && rm -rf bootstrap/cache/*.php 2>/dev/null && echo '✓ Cleared Bootstrap cache'
+            [ -f \"artisan\" ] && php artisan cache:clear 2>/dev/null && echo '✓ Cleared Artisan cache' || true
+            
+            echo '✅ All caches cleared successfully!'
           ENDSSH
       
       - name: 🧹 Cleanup SSH Key
@@ -1503,6 +1510,63 @@ function handleFinalize($config)
         }
     } else {
         $output[] = 'SSL skipped - configure manually later';
+    }
+
+    // === DEPLOY USER VERIFICATION ===
+    // Final check to ensure deploy user exists for GitHub deployments
+    $deployUser = 'deploy';
+    $webRoot = "/var/www/{$domain}";
+
+    $output[] = 'Verifying deploy user for GitHub Actions...';
+    $deployExists = trim(run_command("id -u {$deployUser} 2>/dev/null"));
+
+    if (empty($deployExists)) {
+        $output[] = "Deploy user not found - creating now...";
+
+        // Create user
+        run_command("useradd -m -s /bin/bash {$deployUser} 2>&1");
+
+        // If useradd fails, try adduser
+        $deployExists = trim(run_command("id -u {$deployUser} 2>/dev/null"));
+        if (empty($deployExists)) {
+            run_command("adduser --disabled-password --gecos '' {$deployUser} 2>&1");
+            $deployExists = trim(run_command("id -u {$deployUser} 2>/dev/null"));
+        }
+
+        if (!empty($deployExists)) {
+            // Setup user permissions
+            run_command("usermod -aG www-data {$deployUser}");
+            run_command("chown -R {$deployUser}:{$deployUser} /home/{$deployUser}");
+
+            // Setup SSH if keys exist
+            $sshDir = "/home/{$deployUser}/.ssh";
+            if (is_dir($sshDir)) {
+                run_command("chown -R {$deployUser}:{$deployUser} {$sshDir}");
+                run_command("chmod 700 {$sshDir}");
+                run_command("chmod 600 {$sshDir}/authorized_keys 2>/dev/null");
+                run_command("chmod 600 {$sshDir}/github_deploy 2>/dev/null");
+            }
+
+            // Setup sudoers
+            $sudoersContent = "{$deployUser} ALL=(ALL) NOPASSWD: /usr/bin/chown, /usr/bin/chmod, /usr/bin/find, /usr/bin/systemctl, /usr/sbin/service\n";
+            file_put_contents("/etc/sudoers.d/{$deployUser}", $sudoersContent);
+            run_command("chmod 440 /etc/sudoers.d/{$deployUser}");
+
+            // Fix web directory ownership
+            run_command("chown -R {$deployUser}:www-data {$webRoot}");
+            run_command("chmod -R 775 {$webRoot}");
+
+            $output[] = "Deploy user '{$deployUser}' created and configured successfully";
+        } else {
+            $output[] = "⚠️ WARNING: Could not create deploy user. GitHub deployments may fail.";
+            $output[] = "Please create manually: useradd -m -s /bin/bash deploy";
+        }
+    } else {
+        $output[] = "Deploy user '{$deployUser}' exists (uid: {$deployExists})";
+
+        // Ensure permissions are correct
+        run_command("chown -R {$deployUser}:www-data {$webRoot}");
+        run_command("chmod -R 775 {$webRoot}");
     }
 
     // Remove temporary installer port from UFW
