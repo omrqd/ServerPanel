@@ -41,13 +41,18 @@ let state = {
         sshPublicKey: '',
         deployUser: 'deploy',
         workflowYaml: ''
-    }
+    },
+    systemInfo: null,
+    recommendations: null
 };
 
 // Initialize
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
     renderProgressSteps();
     renderCurrentStep();
+
+    // Auto-fetch system info
+    await fetchSystemInfo();
     setupEventListeners();
 });
 
@@ -102,9 +107,49 @@ function getStepContent(stepId) {
 
 // Welcome Step
 function getWelcomeContent() {
+    const systemInfo = state.systemInfo;
+    const hasSystemInfo = systemInfo && systemInfo.ram;
+
+    const systemInfoHtml = hasSystemInfo ? `
+        <div class="p-4 bg-gradient-to-r from-green-500/10 to-blue-500/10 border border-green-500/20 rounded-xl mb-6">
+            <div class="flex items-center justify-between mb-3">
+                <h3 class="font-semibold text-green-300">🖥️ Your Server Detected</h3>
+                <span class="px-3 py-1 bg-blue-500/20 text-blue-300 text-xs font-semibold rounded-full">${systemInfo.tier || 'Detecting...'}</span>
+            </div>
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-3 text-center">
+                <div class="p-2 bg-black/20 rounded-lg">
+                    <div class="text-2xl font-bold text-white">${systemInfo.ram?.total >= 1024 ? (systemInfo.ram.total / 1024).toFixed(1) + 'GB' : systemInfo.ram?.total + 'MB'}</div>
+                    <div class="text-xs text-gray-400">RAM</div>
+                </div>
+                <div class="p-2 bg-black/20 rounded-lg">
+                    <div class="text-2xl font-bold text-white">${systemInfo.cpu?.cores || '-'}</div>
+                    <div class="text-xs text-gray-400">CPU Cores</div>
+                </div>
+                <div class="p-2 bg-black/20 rounded-lg">
+                    <div class="text-2xl font-bold text-white">${systemInfo.disk?.total || '-'}GB</div>
+                    <div class="text-xs text-gray-400">Storage</div>
+                </div>
+                <div class="p-2 bg-black/20 rounded-lg">
+                    <div class="text-2xl font-bold text-white">${systemInfo.ip || '-'}</div>
+                    <div class="text-xs text-gray-400">Public IP</div>
+                </div>
+            </div>
+            <p class="text-xs text-gray-400 mt-3 text-center">
+                ⚡ All configurations will be optimized for your server specs automatically
+            </p>
+        </div>
+    ` : `
+        <div class="p-4 bg-white/5 rounded-xl mb-6 text-center" id="system-info-loading">
+            <div class="flex items-center justify-center gap-3">
+                <span class="spinner"></span>
+                <span class="text-gray-400">Detecting server specifications...</span>
+            </div>
+        </div>
+    `;
+
     return `
         <div class="glass-card p-8">
-            <div class="text-center mb-8">
+            <div class="text-center mb-6">
                 <div class="w-20 h-20 mx-auto mb-6 rounded-2xl bg-gradient-to-br from-primary-400 to-purple-500 flex items-center justify-center">
                     <svg class="w-10 h-10 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2"></path>
@@ -112,10 +157,11 @@ function getWelcomeContent() {
                 </div>
                 <h2 class="text-3xl font-bold gradient-text mb-3">Welcome to Server Panel</h2>
                 <p class="text-gray-400 max-w-xl mx-auto">
-                    Let's configure your production server. This wizard will install and secure 
-                    everything needed for high-traffic PHP + React applications.
+                    Let's configure your production server. This wizard auto-optimizes everything based on your server specs.
                 </p>
             </div>
+            
+            ${systemInfoHtml}
             
             <div class="max-w-md mx-auto space-y-6">
                 <div>
@@ -149,8 +195,8 @@ function getWelcomeContent() {
                             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path>
                         </svg>
                     </div>
-                    <h3 class="font-semibold mt-3">Fast</h3>
-                    <p class="text-sm text-gray-500 mt-1">Optimized for 100K+ traffic</p>
+                    <h3 class="font-semibold mt-3">Auto-Optimized</h3>
+                    <p class="text-sm text-gray-500 mt-1">Based on your VPS specs</p>
                 </div>
                 <div class="feature-card text-center">
                     <div class="feature-icon bg-purple-500/20 mx-auto">
@@ -1155,4 +1201,38 @@ function copySSHKey() {
 
     copyToClipboard(generatedSSHKey);
     showToast('SSH key copied! Save it in a secure location!', 'success');
+}
+
+// Fetch system information from server
+async function fetchSystemInfo() {
+    try {
+        const response = await fetch(CONFIG.apiEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'get-system-info' })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            state.systemInfo = {
+                ...result.system,
+                tier: result.recommendations?.tier
+            };
+            state.recommendations = result.recommendations;
+
+            // Set optimal swap size based on recommendations
+            if (result.recommendations?.swap?.recommended_gb !== undefined) {
+                state.config.swapSize = result.recommendations.swap.recommended_gb;
+                state.config.enableSwap = result.recommendations.swap.recommended_gb > 0;
+            }
+
+            // Re-render welcome step to show detected specs
+            if (state.currentStep === 0) {
+                renderCurrentStep();
+            }
+        }
+    } catch (error) {
+        console.error('Failed to fetch system info:', error);
+    }
 }

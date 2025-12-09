@@ -31,6 +31,9 @@ try {
         case 'generate-ssh-key':
             $result = handleGenerateSSHKey($config);
             break;
+        case 'get-system-info':
+            $result = handleGetSystemInfo();
+            break;
         case 'finalize':
             $result = handleFinalize($config);
             break;
@@ -42,6 +45,139 @@ try {
 }
 
 echo json_encode($result);
+
+/**
+ * Get system information for auto-optimization
+ */
+function handleGetSystemInfo()
+{
+    // Get RAM (in MB)
+    $totalRam = (int) trim(shell_exec("free -m | grep Mem | awk '{print $2}'"));
+    $usedRam = (int) trim(shell_exec("free -m | grep Mem | awk '{print $3}'"));
+    $freeRam = $totalRam - $usedRam;
+
+    // Get CPU
+    $cpuCores = (int) trim(shell_exec("nproc"));
+    $cpuModel = trim(shell_exec("cat /proc/cpuinfo | grep 'model name' | head -1 | cut -d':' -f2"));
+
+    // Get Disk
+    $diskTotal = trim(shell_exec("df -BG / | tail -1 | awk '{print $2}' | tr -d 'G'"));
+    $diskUsed = trim(shell_exec("df -BG / | tail -1 | awk '{print $3}' | tr -d 'G'"));
+    $diskFree = trim(shell_exec("df -BG / | tail -1 | awk '{print $4}' | tr -d 'G'"));
+
+    // Get OS
+    $osName = trim(shell_exec("cat /etc/os-release | grep '^NAME=' | cut -d'\"' -f2"));
+    $osVersion = trim(shell_exec("cat /etc/os-release | grep '^VERSION_ID=' | cut -d'\"' -f2"));
+
+    // Get Public IP
+    $publicIp = trim(shell_exec("curl -s -4 ifconfig.me 2>/dev/null"));
+
+    // Calculate recommended settings based on specs
+    $recommendations = calculateOptimalSettings($totalRam, $cpuCores);
+
+    return [
+        'success' => true,
+        'system' => [
+            'ram' => [
+                'total' => $totalRam,
+                'used' => $usedRam,
+                'free' => $freeRam,
+                'unit' => 'MB'
+            ],
+            'cpu' => [
+                'cores' => $cpuCores,
+                'model' => $cpuModel
+            ],
+            'disk' => [
+                'total' => (int) $diskTotal,
+                'used' => (int) $diskUsed,
+                'free' => (int) $diskFree,
+                'unit' => 'GB'
+            ],
+            'os' => [
+                'name' => $osName,
+                'version' => $osVersion
+            ],
+            'ip' => $publicIp
+        ],
+        'recommendations' => $recommendations
+    ];
+}
+
+/**
+ * Calculate optimal settings based on system specs
+ */
+function calculateOptimalSettings($ramMB, $cpuCores)
+{
+    // PHP-FPM: ~30MB per process
+    $phpMaxChildren = max(5, min(500, (int) ($ramMB / 30)));
+    $phpStartServers = max(2, (int) ($phpMaxChildren / 4));
+    $phpMinSpare = $phpStartServers;
+    $phpMaxSpare = max(5, (int) ($phpMaxChildren / 2));
+
+    // MySQL InnoDB buffer pool: 50-70% of RAM for dedicated DB server
+    // For shared server, use 25% of RAM
+    $mysqlBufferPool = max(128, (int) ($ramMB * 0.25));
+    $mysqlMaxConnections = max(50, min(500, $cpuCores * 50));
+
+    // Redis: 10-20% of RAM
+    $redisMaxMemory = max(64, min(4096, (int) ($ramMB * 0.15)));
+
+    // OPcache: Based on available RAM
+    $opcacheMemory = $ramMB >= 4096 ? 512 : ($ramMB >= 2048 ? 256 : 128);
+
+    // Nginx workers: Usually equal to CPU cores
+    $nginxWorkers = $cpuCores;
+    $nginxWorkerConnections = $ramMB >= 2048 ? 4096 : 1024;
+
+    // Swap recommendation
+    $swapRecommended = $ramMB < 2048 ? max(1, min(4, (int) (4096 / $ramMB))) : 0;
+
+    return [
+        'php_fpm' => [
+            'max_children' => $phpMaxChildren,
+            'start_servers' => $phpStartServers,
+            'min_spare_servers' => $phpMinSpare,
+            'max_spare_servers' => $phpMaxSpare
+        ],
+        'mysql' => [
+            'innodb_buffer_pool_size' => $mysqlBufferPool . 'M',
+            'max_connections' => $mysqlMaxConnections
+        ],
+        'redis' => [
+            'maxmemory' => $redisMaxMemory . 'mb'
+        ],
+        'opcache' => [
+            'memory_consumption' => $opcacheMemory
+        ],
+        'nginx' => [
+            'worker_processes' => $nginxWorkers,
+            'worker_connections' => $nginxWorkerConnections
+        ],
+        'swap' => [
+            'recommended_gb' => $swapRecommended
+        ],
+        'tier' => getTierName($ramMB)
+    ];
+}
+
+/**
+ * Get tier name based on RAM
+ */
+function getTierName($ramMB)
+{
+    if ($ramMB >= 16384)
+        return 'Enterprise (16GB+)';
+    if ($ramMB >= 8192)
+        return 'Large (8GB)';
+    if ($ramMB >= 4096)
+        return 'Medium (4GB)';
+    if ($ramMB >= 2048)
+        return 'Small (2GB)';
+    if ($ramMB >= 1024)
+        return 'Micro (1GB)';
+    return 'Nano (' . $ramMB . 'MB)';
+}
 
 /**
  * Handle component installation
