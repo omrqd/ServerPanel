@@ -1076,16 +1076,31 @@ function installGitHub($config)
         if (empty($verifyUser)) {
             $output[] = "⚠️ Warning: Failed to create deploy user, trying alternative method...";
             run_command("adduser --disabled-password --gecos '' --home /home/{$deployUser} {$deployUser} 2>/dev/null || true");
+            run_command("usermod -aG www-data {$deployUser}");
         }
+
+        // FIX: Ensure home directory is owned by deploy user
+        run_command("chown -R {$deployUser}:{$deployUser} /home/{$deployUser}");
 
         $output[] = "Deploy user '{$deployUser}' created";
     } else {
         $output[] = "Deploy user '{$deployUser}' already exists";
     }
 
-    // Create .ssh directory
+    // Final verification - abort if user wasn't created
+    $finalCheck = trim(run_command("id -u {$deployUser} 2>/dev/null"));
+    if (empty($finalCheck)) {
+        return [
+            'success' => false,
+            'message' => 'Failed to create deploy user. Please create manually: useradd -m -s /bin/bash deploy',
+            'output' => $output
+        ];
+    }
+
+    // Create .ssh directory with correct ownership from the start
     $sshDir = "/home/{$deployUser}/.ssh";
     run_command("mkdir -p {$sshDir}");
+    run_command("chown {$deployUser}:{$deployUser} {$sshDir}");
     run_command("chmod 700 {$sshDir}");
 
     // Generate SSH key pair for GitHub Actions
