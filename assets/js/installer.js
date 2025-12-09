@@ -747,26 +747,63 @@ function getCompleteContent() {
                 <h3 class="font-semibold mb-4">🔒 SSL Certificate Mode</h3>
                 <div class="space-y-3">
                     <label class="flex items-center p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-all">
-                        <input type="radio" name="sslMode" value="cloudflare" class="mr-3" ${state.config.sslMode === 'cloudflare' ? 'checked' : ''} onchange="state.config.sslMode = 'cloudflare'">
+                        <input type="radio" name="sslMode" value="cloudflare" class="mr-3" ${state.config.sslMode === 'cloudflare' ? 'checked' : ''} onchange="setSslMode('cloudflare')">
                         <div>
-                            <span class="font-medium">☁️ Cloudflare SSL</span>
-                            <p class="text-sm text-gray-500">Use Cloudflare's SSL proxy (recommended)</p>
+                            <span class="font-medium">☁️ Cloudflare Full (Strict)</span>
+                            <p class="text-sm text-gray-500">Origin certificate for end-to-end encryption</p>
                         </div>
                     </label>
                     <label class="flex items-center p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-all">
-                        <input type="radio" name="sslMode" value="letsencrypt" class="mr-3" ${state.config.sslMode === 'letsencrypt' || !state.config.sslMode ? 'checked' : ''} onchange="state.config.sslMode = 'letsencrypt'">
+                        <input type="radio" name="sslMode" value="letsencrypt" class="mr-3" ${state.config.sslMode === 'letsencrypt' || !state.config.sslMode ? 'checked' : ''} onchange="setSslMode('letsencrypt')">
                         <div>
                             <span class="font-medium">🔐 Let's Encrypt</span>
                             <p class="text-sm text-gray-500">Free SSL certificate (requires domain pointing to server)</p>
                         </div>
                     </label>
                     <label class="flex items-center p-3 bg-white/5 rounded-lg cursor-pointer hover:bg-white/10 transition-all">
-                        <input type="radio" name="sslMode" value="none" class="mr-3" ${state.config.sslMode === 'none' ? 'checked' : ''} onchange="state.config.sslMode = 'none'">
+                        <input type="radio" name="sslMode" value="none" class="mr-3" ${state.config.sslMode === 'none' ? 'checked' : ''} onchange="setSslMode('none')">
                         <div>
                             <span class="font-medium">⏭️ Skip SSL</span>
                             <p class="text-sm text-gray-500">Configure SSL manually later</p>
                         </div>
                     </label>
+                </div>
+                
+                <!-- Cloudflare Origin Certificate (for Full Strict) -->
+                <div id="cloudflare-cert-section" class="mt-4 ${state.config.sslMode === 'cloudflare' ? '' : 'hidden'}">
+                    <div class="p-4 bg-orange-500/10 border border-orange-500/20 rounded-lg mb-4">
+                        <h4 class="font-medium text-orange-300 mb-2">📋 How to get Cloudflare Origin Certificate:</h4>
+                        <ol class="text-xs text-gray-400 space-y-1 list-decimal list-inside">
+                            <li>Go to Cloudflare Dashboard → Your Domain → SSL/TLS → Origin Server</li>
+                            <li>Click "Create Certificate"</li>
+                            <li>Choose "Generate private key and CSR with Cloudflare"</li>
+                            <li>Set validity (15 years recommended)</li>
+                            <li>Click "Create" and copy both the certificate and key below</li>
+                        </ol>
+                    </div>
+                    
+                    <div class="space-y-4">
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Origin Certificate (PEM)</label>
+                            <textarea id="cloudflare-cert" 
+                                      class="input-field w-full h-24 font-mono text-xs" 
+                                      placeholder="-----BEGIN CERTIFICATE-----
+...
+-----END CERTIFICATE-----"></textarea>
+                        </div>
+                        <div>
+                            <label class="block text-sm font-medium mb-2">Private Key (PEM)</label>
+                            <textarea id="cloudflare-key" 
+                                      class="input-field w-full h-24 font-mono text-xs" 
+                                      placeholder="-----BEGIN PRIVATE KEY-----
+...
+-----END PRIVATE KEY-----"></textarea>
+                        </div>
+                    </div>
+                    
+                    <div class="mt-3 p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+                        <p class="text-xs text-green-300">✅ After installing, set Cloudflare SSL mode to <strong>Full (Strict)</strong> for maximum security.</p>
+                    </div>
                 </div>
             </div>
             
@@ -1108,7 +1145,24 @@ async function setupGitHub() {
 
 // Finalize installation
 async function finalizeInstallation() {
-    showLoading('Finalizing setup and removing installer...');
+    showLoading('Finalizing setup and configuring SSL...');
+
+    // Get Cloudflare cert data if selected
+    if (state.config.sslMode === 'cloudflare') {
+        const certEl = document.getElementById('cloudflare-cert');
+        const keyEl = document.getElementById('cloudflare-key');
+        if (certEl && keyEl) {
+            state.config.cloudflareCert = certEl.value;
+            state.config.cloudflareKey = keyEl.value;
+        }
+
+        // Validate cert and key are provided
+        if (!state.config.cloudflareCert || !state.config.cloudflareKey) {
+            hideLoading();
+            showToast('Please paste your Cloudflare origin certificate and key', 'error');
+            return;
+        }
+    }
 
     try {
         const response = await fetch(CONFIG.apiEndpoint, {
@@ -1229,7 +1283,7 @@ function downloadSSHKey() {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'server-panel-key';
+    a.download = 'server-panel-key.txt';
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -1279,5 +1333,18 @@ async function fetchSystemInfo() {
         }
     } catch (error) {
         console.error('Failed to fetch system info:', error);
+    }
+}
+
+// Toggle SSL mode and show/hide Cloudflare cert section
+function setSslMode(mode) {
+    state.config.sslMode = mode;
+    const certSection = document.getElementById('cloudflare-cert-section');
+    if (certSection) {
+        if (mode === 'cloudflare') {
+            certSection.classList.remove('hidden');
+        } else {
+            certSection.classList.add('hidden');
+        }
     }
 }

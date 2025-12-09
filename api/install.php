@@ -1383,9 +1383,36 @@ function handleFinalize($config)
             }
         }
     } elseif ($sslMode === 'cloudflare') {
-        $output[] = 'Configuring Nginx for Cloudflare SSL...';
-        configureCloudflareSSL($domain);
-        $output[] = 'Cloudflare SSL configured (Full or Full Strict mode supported)';
+        $output[] = 'Configuring Cloudflare Origin SSL...';
+
+        // Save origin certificate and key from user input
+        $cert = $config['cloudflareCert'] ?? '';
+        $key = $config['cloudflareKey'] ?? '';
+
+        if (!empty($cert) && !empty($key)) {
+            // Create SSL directory
+            $sslDir = "/etc/ssl/{$domain}";
+            run_command("mkdir -p {$sslDir}");
+
+            // Save certificate and key
+            file_put_contents("{$sslDir}/origin.crt", $cert);
+            file_put_contents("{$sslDir}/origin.key", $key);
+
+            // Set secure permissions
+            run_command("chmod 600 {$sslDir}/origin.key");
+            run_command("chmod 644 {$sslDir}/origin.crt");
+            run_command("chown root:root {$sslDir}/*");
+
+            $output[] = "Origin certificate saved to {$sslDir}";
+
+            // Configure Nginx with the origin certificate
+            configureCloudflareSSL($domain, $sslDir);
+            $output[] = 'Nginx configured for Cloudflare Full (Strict) SSL';
+        } else {
+            // Fallback to flexible mode config
+            configureCloudflareSSL($domain, null);
+            $output[] = 'Cloudflare SSL configured (Flexible mode - no origin cert provided)';
+        }
     } else {
         $output[] = 'SSL skipped - configure manually later';
     }
@@ -1453,7 +1480,7 @@ rm -- \"\$0\"
 /**
  * Configure Nginx for Cloudflare SSL
  */
-function configureCloudflareSSL($domain)
+function configureCloudflareSSL($domain, $sslDir = null)
 {
     // Get PHP version
     $phpVersion = trim(run_command('php -v | head -n 1 | cut -d " " -f 2 | cut -d "." -f 1,2'));
@@ -1488,8 +1515,84 @@ real_ip_header CF-Connecting-IP;
 ";
     file_put_contents('/etc/nginx/conf.d/cloudflare.conf', $cloudflareConfig);
 
-    // Update site config for HTTPS (Cloudflare handles SSL termination)
-    $nginxConfig = "# {$domain} - Cloudflare SSL Configuration
+    // Determine if we have origin certificate for Full Strict mode
+    $hasOriginCert = $sslDir && file_exists("{$sslDir}/origin.crt") && file_exists("{$sslDir}/origin.key");
+
+    if ($hasOriginCert) {
+        // Full Strict mode - HTTPS with origin certificate
+        $nginxConfig = "# {$domain} - Cloudflare Full (Strict) SSL Configuration
+server {
+    listen 80;
+    listen [::]:80;
+    server_name {$domain} www.{$domain};
+    return 301 https://\$host\$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name {$domain} www.{$domain};
+    root {$webRoot}/public;
+    index index.php index.html;
+
+    # Cloudflare Origin Certificate
+    ssl_certificate {$sslDir}/origin.crt;
+    ssl_certificate_key {$sslDir}/origin.key;
+    
+    # SSL settings optimized for Cloudflare
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers on;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    # Security headers
+    add_header X-Frame-Options \"SAMEORIGIN\" always;
+    add_header X-Content-Type-Options \"nosniff\" always;
+    add_header X-XSS-Protection \"1; mode=block\" always;
+    add_header Referrer-Policy \"strict-origin-when-cross-origin\" always;
+    add_header Strict-Transport-Security \"max-age=31536000; includeSubDomains\" always;
+
+    # Gzip compression
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types text/plain text/css text/xml application/json application/javascript application/xml+rss application/atom+xml image/svg+xml;
+
+    location / {
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    location ~ \\.php\$ {
+        fastcgi_pass unix:/run/php/php{$phpVersion}-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME \$realpath_root\$fastcgi_script_name;
+        include fastcgi_params;
+        fastcgi_hide_header X-Powered-By;
+    }
+
+    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2)\$ {
+        expires 1y;
+        add_header Cache-Control \"public, immutable\";
+    }
+
+    location ~ /\\. {
+        deny all;
+    }
+
+    location /api {
+        limit_req zone=api burst=20 nodelay;
+        try_files \$uri \$uri/ /index.php?\$query_string;
+    }
+
+    access_log /var/log/nginx/{$domain}.access.log;
+    error_log /var/log/nginx/{$domain}.error.log;
+}
+";
+    } else {
+        // Flexible mode - HTTP only (Cloudflare handles SSL termination)
+        $nginxConfig = "# {$domain} - Cloudflare Flexible SSL Configuration
 server {
     listen 80;
     listen [::]:80;
@@ -1539,6 +1642,8 @@ server {
     error_log /var/log/nginx/{$domain}.error.log;
 }
 ";
+    }
+
     file_put_contents("/etc/nginx/sites-available/{$domain}", $nginxConfig);
     run_command('nginx -t && systemctl reload nginx');
 }
