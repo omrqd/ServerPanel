@@ -1298,8 +1298,12 @@ function handleTest($component, $config)
 {
     switch ($component) {
         case 'nginx':
-            $result = run_command('systemctl is-active nginx');
-            return ['success' => trim($result) === 'active'];
+            // Check nginx config is valid (service may be stopped during installer)
+            $configTest = run_command('nginx -t 2>&1');
+            $installed = strpos($configTest, 'syntax is ok') !== false;
+            // Also try to check if service is running (optional)
+            $active = trim(run_command('systemctl is-active nginx 2>/dev/null')) === 'active';
+            return ['success' => $installed, 'running' => $active];
 
         case 'php':
             $result = run_command('php -v');
@@ -1712,7 +1716,14 @@ server {
 ";
     }
 
+    // Write config to sites-available
     file_put_contents("/etc/nginx/sites-available/{$domain}", $nginxConfig);
+
+    // Enable the site by creating symlink
+    run_command("ln -sf /etc/nginx/sites-available/{$domain} /etc/nginx/sites-enabled/{$domain}");
+    run_command('rm -f /etc/nginx/sites-enabled/default');
+
+    // Test and reload nginx
     run_command('nginx -t && systemctl reload nginx');
 }
 
