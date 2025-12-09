@@ -1057,8 +1057,27 @@ function installGitHub($config)
     $userExists = trim(run_command("id -u {$deployUser} 2>/dev/null"));
     if (empty($userExists)) {
         $output[] = "Creating deploy user '{$deployUser}'...";
-        run_command("useradd -m -s /bin/bash {$deployUser}");
+
+        // Check if home directory already exists (from previous failed attempt)
+        $homeExists = is_dir("/home/{$deployUser}");
+
+        if ($homeExists) {
+            // Directory exists, create user without -m flag and set home manually
+            run_command("useradd -d /home/{$deployUser} -s /bin/bash {$deployUser}");
+        } else {
+            // Normal case: create user with home directory
+            run_command("useradd -m -s /bin/bash {$deployUser}");
+        }
+
         run_command("usermod -aG www-data {$deployUser}");
+
+        // Verify user was created
+        $verifyUser = trim(run_command("id -u {$deployUser} 2>/dev/null"));
+        if (empty($verifyUser)) {
+            $output[] = "⚠️ Warning: Failed to create deploy user, trying alternative method...";
+            run_command("adduser --disabled-password --gecos '' --home /home/{$deployUser} {$deployUser} 2>/dev/null || true");
+        }
+
         $output[] = "Deploy user '{$deployUser}' created";
     } else {
         $output[] = "Deploy user '{$deployUser}' already exists";
