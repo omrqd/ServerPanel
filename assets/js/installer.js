@@ -33,7 +33,10 @@ let state = {
         enableUfw: true,
         enableGithub: true,
         githubRepo: '',
-        githubBranch: 'main'
+        githubBranch: 'main',
+        sshAllowPassword: true,
+        sshAllowKey: true,
+        sshDisableRootPassword: false
     },
     completed: {},
     testResults: {},
@@ -258,7 +261,49 @@ function getSecurityContent() {
                                min="1" 
                                max="65535">
                     </div>
-                    <p class="text-xs text-gray-500">SSH hardened: MaxAuthTries=3, no X11, no TCP forwarding</p>
+                </div>
+                
+                <!-- SSH Authentication Methods -->
+                <div class="p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-xl">
+                    <h3 class="font-semibold mb-3 text-yellow-300">🔐 SSH Authentication Methods</h3>
+                    
+                    <div class="space-y-3">
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <span class="text-sm font-medium">Allow Password Login</span>
+                                <p class="text-xs text-gray-500">Convenient but less secure</p>
+                            </div>
+                            <div class="toggle-switch ${state.config.sshAllowPassword ? 'active' : ''}" onclick="toggleConfig('sshAllowPassword')"></div>
+                        </div>
+                        
+                        <div class="flex items-center justify-between">
+                            <div>
+                                <span class="text-sm font-medium">Allow SSH Key Login</span>
+                                <p class="text-xs text-gray-500">Most secure (recommended)</p>
+                            </div>
+                            <div class="toggle-switch ${state.config.sshAllowKey ? 'active' : ''}" onclick="toggleConfig('sshAllowKey')"></div>
+                        </div>
+                        
+                        <div class="flex items-center justify-between ${state.sshKeyGenerated ? '' : 'opacity-50'}">
+                            <div>
+                                <span class="text-sm font-medium">Disable Root Password After Key Setup</span>
+                                <p class="text-xs text-gray-500">Maximum security (key-only)</p>
+                            </div>
+                            <div class="toggle-switch ${state.config.sshDisableRootPassword ? 'active' : ''}" onclick="toggleConfig('sshDisableRootPassword')"></div>
+                        </div>
+                    </div>
+                    
+                    ${!state.config.sshAllowPassword && !state.config.sshAllowKey ? `
+                        <div class="mt-3 p-2 bg-red-500/20 border border-red-500/30 rounded-lg">
+                            <p class="text-xs text-red-300">⚠️ Warning: You must enable at least one auth method!</p>
+                        </div>
+                    ` : ''}
+                    
+                    ${state.config.sshDisableRootPassword && !state.sshKeyGenerated ? `
+                        <div class="mt-3 p-2 bg-orange-500/20 border border-orange-500/30 rounded-lg">
+                            <p class="text-xs text-orange-300">⚠️ Generate an SSH key first before disabling password auth!</p>
+                        </div>
+                    ` : ''}
                 </div>
                 
                 <!-- Additional Security (always enabled) -->

@@ -364,12 +364,36 @@ maxretry = 10
 
     // === SSH HARDENING ===
     $output[] = 'Hardening SSH configuration...';
+
+    // Get user's auth method preferences
+    $allowPassword = ($config['sshAllowPassword'] ?? true) ? 'yes' : 'no';
+    $allowKey = ($config['sshAllowKey'] ?? true) ? 'yes' : 'no';
+    $disableRootPassword = $config['sshDisableRootPassword'] ?? false;
+
+    // Determine PermitRootLogin based on settings
+    $permitRootLogin = 'yes'; // Default: allow both password and key
+    if ($disableRootPassword) {
+        $permitRootLogin = 'prohibit-password'; // Only key-based root login
+    } elseif ($allowPassword === 'no' && $allowKey === 'yes') {
+        $permitRootLogin = 'prohibit-password';
+    } elseif ($allowPassword === 'yes') {
+        $permitRootLogin = 'yes';
+    }
+
+    // Safety check: ensure at least one auth method is enabled
+    if ($allowPassword === 'no' && $allowKey === 'no') {
+        $allowPassword = 'yes'; // Fallback to password if user disabled both
+        $output[] = '⚠️ Warning: Re-enabled password auth (cannot disable both methods)';
+    }
+
     $sshConfig = "
 # Server Panel - Production SSH Configuration
+# Auth Methods: Password={$allowPassword}, Key={$allowKey}
+
 Port {$sshPort}
-PermitRootLogin prohibit-password
-PasswordAuthentication yes
-PubkeyAuthentication yes
+PermitRootLogin {$permitRootLogin}
+PasswordAuthentication {$allowPassword}
+PubkeyAuthentication {$allowKey}
 PermitEmptyPasswords no
 ChallengeResponseAuthentication no
 UsePAM yes
@@ -377,17 +401,17 @@ X11Forwarding no
 PrintMotd no
 AcceptEnv LANG LC_*
 Subsystem sftp /usr/lib/openssh/sftp-server
-MaxAuthTries 3
-LoginGraceTime 30
+MaxAuthTries 5
+LoginGraceTime 60
 ClientAliveInterval 300
-ClientAliveCountMax 2
+ClientAliveCountMax 3
 AllowAgentForwarding no
 AllowTcpForwarding no
 MaxStartups 10:30:60
 ";
     file_put_contents('/etc/ssh/sshd_config.d/99-server-panel.conf', $sshConfig);
     run_command('systemctl restart ssh 2>/dev/null || systemctl restart sshd');
-    $output[] = 'SSH hardened (MaxAuthTries=3, no X11, no TCP forwarding)';
+    $output[] = "SSH configured: Password={$allowPassword}, Key={$allowKey}, RootLogin={$permitRootLogin}";
 
     // === KERNEL SECURITY (sysctl) ===
     $output[] = 'Applying kernel security settings...';
