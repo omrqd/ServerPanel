@@ -1716,18 +1716,23 @@ function handleFinalize($config)
 
     $output[] = 'Credentials saved to /root/.server-panel-credentials.json';
 
-    // Self-destruction - find all possible installer locations
-    $possibleDirs = [
-        dirname(__DIR__),
+    // Self-destruction - remove all possible installer locations
+    $dirsToRemove = [
+        dirname(__DIR__),  // Current installer directory
         '/tmp/server-panel-installer',
         '/tmp/server-panel',
         '/root/server-panel',
-        '/var/www/server-panel'
+        '/var/www/server-panel',
+        '/tmp/server-panel-ssl'
     ];
 
-    $dirsToRemove = [];
-    foreach ($possibleDirs as $dir) {
-        if (is_dir($dir) && file_exists($dir . '/install.sh')) {
+    // Add any other directories with install.sh
+    $additionalDirs = [
+        '/tmp/server-panel-installer',
+        '/tmp/server-panel'
+    ];
+    foreach ($additionalDirs as $dir) {
+        if (is_dir($dir) && !in_array($dir, $dirsToRemove)) {
             $dirsToRemove[] = $dir;
         }
     }
@@ -1762,8 +1767,9 @@ rm -- \"\$0\"
     file_put_contents('/tmp/cleanup-installer.sh', $cleanupScript);
     chmod('/tmp/cleanup-installer.sh', 0755);
 
-    // Run cleanup in background using at command or nohup
-    run_command('nohup /tmp/cleanup-installer.sh > /dev/null 2>&1 &');
+    // Run cleanup in background - try multiple methods
+    shell_exec('bash /tmp/cleanup-installer.sh > /tmp/cleanup.log 2>&1 &');
+    shell_exec('disown 2>/dev/null || true');
 
     $output[] = 'Installer files will be removed in 3 seconds';
     $output[] = 'Directories to clean: ' . implode(', ', $dirsToRemove);
